@@ -57,8 +57,7 @@ public class FileFinalizationService {
         }
     }
 
-    public void finalizeMovie(
-            UploadJob job
+    public void finalizeMovie( UploadJob job
     ) throws IOException {
 
         FileUploadMetadata.MovieUploadMetadataDto movie = (FileUploadMetadata.MovieUploadMetadataDto) requirePayload(job);
@@ -94,8 +93,7 @@ public class FileFinalizationService {
         Path tempSubtitleDir = tempMovieDir.resolve("subtitles");
         Path finalSubtitleDir = finalMovieDir.resolve("subtitles");
 
-        List<CatalogEventDtos.SubtitleFinalizedDto> subtitles =
-                finalizeSubtitles(tempSubtitleDir, finalSubtitleDir, movieId, null);
+        List<CatalogEventDtos.SubtitleFinalizedDto> subtitles = finalizeSubtitles(tempSubtitleDir, finalSubtitleDir, movieId, null);
 
         // finalize assets
 

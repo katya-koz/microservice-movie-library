@@ -115,7 +115,7 @@ export default function WatchClient() {
   });
 
   const videoSrc = useMemo(
-    () => (playback ? `${MEDIA_URL_ROOT}${playback.filePath}` : null),
+    () => (playback ? `${playback.filePath}` : null),
     [playback],
   );
 
