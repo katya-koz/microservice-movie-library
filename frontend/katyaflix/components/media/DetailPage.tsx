@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
@@ -22,9 +23,6 @@ type DetailProps = {
   id: string;
   extraContent?: React.ReactNode | null; // rendered below the regular detail page, e.g. seasons/episodes for a SHOW
 };
-
-const MEDIA_URL_ROOT =
-  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
 
 export default function DetailPage({
   title,

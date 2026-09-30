@@ -11,10 +11,7 @@ import { useUser } from "@/context/UserContext";
 import { useEpisodeWatchtime, useMovieWatchtime } from "@/hooks/useWatchtime";
 import { useWatchtimeSync } from "@/hooks/useWatchtimeSync";
 import { CustomVideoPlayer } from "@/components/CustomVideoPlayer";
-
-const MEDIA_URL_ROOT =
-  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
-
+import { MEDIA_URL_ROOT } from "@/lib/config";
 // Don't bother resuming if the viewer was basically at the start, or
 // basically at the end (in which case just start over).
 const RESUME_MIN_SECONDS = 10;

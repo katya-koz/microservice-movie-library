@@ -7,9 +7,6 @@ type MovieDetailProps = {
   modal?: boolean;
 };
 
-const MEDIA_URL_ROOT =
-  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
-
 export default function MovieDetail({ movieId }: MovieDetailProps) {
   const { data: movie, isLoading, error } = useMovieDetail(movieId);
 
