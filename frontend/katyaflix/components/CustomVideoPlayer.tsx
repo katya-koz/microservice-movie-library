@@ -37,7 +37,6 @@ export interface NextEpisodeInfo {
 
 export interface CustomVideoPlayerProps {
   src: string;
-  mediaUrlRoot: string;
   mediaType: "MOVIE" | "EPISODE";
   /** Movie title, or show name when mediaType === "EPISODE". */
   title: string;
