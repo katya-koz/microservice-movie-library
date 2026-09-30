@@ -95,7 +95,7 @@ public class UploadService {
             throw new IllegalStateException( "finalizeFileUpload called before both sides completed for job " + job.getId());
         }
 
-        jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FINALIZING);
+        jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FINALIZING, Instant.now());
         try {
 
             if ("MOVIE".equalsIgnoreCase(job.getMediaType())) {
@@ -111,9 +111,9 @@ public class UploadService {
     }
     @Transactional
     public void completeFileUpload(UUID jobId) {
-        jobRepository.updateStatusWhereId(jobId, UploadJob.UploadStatus.COMPLETED);
-        jobRepository.updateFilePathUpdateStatusWhereId(jobId, true);
-        jobRepository.updateCompletedAtWhereId(jobId);
+        jobRepository.updateStatusWhereId(jobId, UploadJob.UploadStatus.COMPLETED,Instant.now());
+        jobRepository.updateFilePathUpdateStatusWhereId(jobId, true,Instant.now());
+        jobRepository.updateCompletedAtWhereId(jobId,Instant.now());
     }
 
     /**
@@ -124,11 +124,11 @@ public class UploadService {
      */
     public void processMovie(UploadJob job, FileUploadMetadata.MovieUploadMetadataDto metadata,  Map<String, MultipartFile> fileMap) {
         try {
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.PENDING);
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.PENDING,Instant.now());
 
             // Ask catalog service to validate/upsert the movie and return its UUID.
             catalogValidationProducer.publishMovieValidation(job, metadata);
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.SAVING_ASSETS);
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.SAVING_ASSETS,Instant.now());
             /*
              * Temporary media:
              *
@@ -143,8 +143,8 @@ public class UploadService {
         } catch (Exception e) {
             log.error("Upload processing failed for job {}", job.getId(), e);
 
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FAILURE);
-            jobRepository.appendErrorMessage(job.getId(), e.getMessage());
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FAILURE,Instant.now());
+            jobRepository.appendErrorMessage(job.getId(), e.getMessage(),Instant.now());
 
             throw new UploadProcessingException(  "Upload processing failed: " + e.getMessage(), e);
         }
@@ -154,7 +154,7 @@ public class UploadService {
                             FileUploadMetadata.ShowUploadMetadataDto metadata,
                             Map<String, MultipartFile> fileMap) {
         try {
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.PENDING);
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.PENDING,Instant.now());
 
             // Ask catalog service to validate/upsert the show, seasons and episodes.
             catalogValidationProducer.publishShowValidation(job, metadata);
@@ -169,7 +169,7 @@ public class UploadService {
 
 
 
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.SAVING_ASSETS);
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.SAVING_ASSETS,Instant.now());
             SavedFiles saved = saveShowFiles(metadata, fileMap, showMediaDir, job);
 
             enqueueForEncoding(job.getId(), saved);
@@ -185,7 +185,7 @@ public class UploadService {
     }
 
     private void enqueueForEncoding(UUID jobId, SavedFiles saved) {
-        jobRepository.enqueueForEncoding(jobId,UploadJob.UploadStatus.QUEUED_FOR_ENCODING,toStringMap(saved.videoFiles()), toStringMap(saved.subtitleFiles()));
+        jobRepository.enqueueForEncoding(jobId,UploadJob.UploadStatus.QUEUED_FOR_ENCODING,toStringMap(saved.videoFiles()), toStringMap(saved.subtitleFiles()),Instant.now());
     }
 
     private Map<String, String> toStringMap(Map<String, Path> paths) {
@@ -208,25 +208,25 @@ public class UploadService {
             Map<String, Path> videoFiles = toPathMap(job.getVideoFilePaths());
             Map<String, Path> subtitleFiles = toPathMap(job.getSubtitleFilePaths());
 
-            jobRepository.updateCurrentStepWhereId(jobId,"Encoding " + videoFiles.size() + " video file(s)");
+            jobRepository.updateCurrentStepWhereId(jobId,"Encoding " + videoFiles.size() + " video file(s)",Instant.now());
 
             List<EncodedMediaFile> encodedFiles = fileEncodingService.encodeAll(videoFiles);
 
             if (!subtitleFiles.isEmpty()) {
-                jobRepository.updateCurrentStepWhereId(jobId,"Converting " + subtitleFiles.size() + " subtitle file(s)");
+                jobRepository.updateCurrentStepWhereId(jobId,"Converting " + subtitleFiles.size() + " subtitle file(s)",Instant.now());
                 fileEncodingService.encodeSubtitles(subtitleFiles);
             }
 
             jobRepository.saveEncodedMediaFiles(jobId, encodedFiles);
-            jobRepository.updateFileUploadStatusWhereId(jobId, true);
-            jobRepository.updateCurrentStepWhereId(jobId, "Encoding complete");
+            jobRepository.updateFileUploadStatusWhereId(jobId, true,Instant.now());
+            jobRepository.updateCurrentStepWhereId(jobId, "Encoding complete",Instant.now());
 
             advance(jobId);
 
         } catch (Exception e) {
             log.error("Encoding failed for job {}", jobId, e);
-            jobRepository.updateStatusWhereId(jobId, UploadJob.UploadStatus.FAILURE);
-            jobRepository.appendErrorMessage(jobId, e.getMessage());
+            jobRepository.updateStatusWhereId(jobId, UploadJob.UploadStatus.FAILURE,Instant.now());
+            jobRepository.appendErrorMessage(jobId, e.getMessage(),Instant.now());
         }
     }
 
@@ -259,14 +259,14 @@ public class UploadService {
             finalizeFileUpload(job);
 
         } else {
-            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.AWAITING_CATALOG);
+            jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.AWAITING_CATALOG,Instant.now());
         }
     }
 
     public void fail(UploadJob job, String message) {
-        jobRepository.updateFileUploadStatusWhereId(job.getId(), false);
-        jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FAILURE);
-        jobRepository.appendErrorMessage(job.getId(), message);
+        jobRepository.updateFileUploadStatusWhereId(job.getId(), false,Instant.now());
+        jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.FAILURE,Instant.now());
+        jobRepository.appendErrorMessage(job.getId(), message,Instant.now());
     }
 
     private SavedFiles saveMovieFiles(
@@ -431,11 +431,11 @@ public class UploadService {
     @Transactional
     public void appendErrorMessageById(UUID uuid, String message) {
 
-        jobRepository.appendErrorMessage(uuid, message);
+        jobRepository.appendErrorMessage(uuid, message,Instant.now());
     }
     @Transactional
     public void updateMediaEnrichmentStatusById(UUID uuid, boolean b) {
 
-        jobRepository.updateMediaEnrichmentStatusWhereId(uuid, b);
+        jobRepository.updateMediaEnrichmentStatusWhereId(uuid, b,Instant.now());
     }
 }

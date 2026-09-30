@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.Update;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,62 +20,95 @@ public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
 
     @Query("{ '_id' : ?0 }")
     @Update(pipeline = {
-            "{ '$set': { 'status': ?1, 'updated_at': '$$NOW' } }"
+            "{ '$set': { 'status': ?1, 'updated_at': ?2 } }"
     })
-    void updateStatusWhereId(UUID id, UploadJob.UploadStatus status);
-
-    @Query("{ '_id' : ?0 }")
-    @Update(pipeline = {
-            "{ '$set': { 'media_file_enrichment_status': ?1, 'updated_at': '$$NOW' } }"
-    })
-    void updateMediaEnrichmentStatusWhereId(UUID id, boolean mediaEnrichmentStatus);
-
-    @Query("{ '_id' : ?0 }")
-    @Update(pipeline = {
-            "{ '$set': { 'file_path_update_status': ?1, 'updated_at': '$$NOW' } }"
-    })
-
-    void updateFilePathUpdateStatusWhereId(UUID id, boolean filePathUpdateStatus);
-
-    @Query("{ '_id' : ?0 }")
-    @Update(pipeline = {
-            "{ '$set': { 'catalog_validation_status': ?1, 'updated_at': '$$NOW' } }"
-    })
-
-
-    void updateFileUploadStatusWhereId(UUID id, boolean fileUploadStatus);
-
-    @Query("{ '_id' : ?0 }")
-    @Update(pipeline = {
-            "{ '$set': { 'file_upload_status': ?1, 'updated_at': '$$NOW' } }"
-    })
-
-    void updateCatalogValidationStatusWhereId(UUID id, boolean catalogValidationStatus);
+    void updateStatusWhereId(
+            UUID id,
+            UploadJob.UploadStatus status,
+            Instant updatedAt
+    );
 
 
     @Query("{ '_id' : ?0 }")
     @Update(pipeline = {
-            "{ '$set': { 'catalog_payload': ?1, 'updated_at': '$$NOW' } }"
+            "{ '$set': { 'media_file_enrichment_status': ?1, 'updated_at': ?2 } }"
     })
-    void updatePayloadWhereId(UUID id, FileUploadMetadata.UploadMetadataDto payload);
+    void updateMediaEnrichmentStatusWhereId(
+            UUID id,
+            boolean mediaEnrichmentStatus,
+            Instant updatedAt
+    );
+
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { 'file_path_update_status': ?1, 'updated_at': ?2 } }"
+    })
+    void updateFilePathUpdateStatusWhereId(
+            UUID id,
+            boolean filePathUpdateStatus,
+            Instant updatedAt
+    );
+
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { 'catalog_validation_status': ?1, 'updated_at': ?2 } }"
+    })
+    void updateCatalogValidationStatusWhereId(
+            UUID id,
+            boolean catalogValidationStatus,
+            Instant updatedAt
+    );
+
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { 'file_upload_status': ?1, 'updated_at': ?2 } }"
+    })
+    void updateFileUploadStatusWhereId(
+            UUID id,
+            boolean fileUploadStatus,
+            Instant updatedAt
+    );
+
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { 'catalog_payload': ?1, 'updated_at': ?2 } }"
+    })
+    void updatePayloadWhereId(
+            UUID id,
+            FileUploadMetadata.UploadMetadataDto payload,
+            Instant updatedAt
+    );
+
 
     /**
-     * add to errors list
+     * Add to errors list.
      */
     @Query("{ '_id' : ?0 }")
-    @Update("{ '$push': { 'error_messages': ?1 }, '$set': { 'updated_at': '$$NOW' } }")
-    void appendErrorMessage(UUID id, String message);
+    @Update("{ '$push': { 'error_messages': ?1 }, '$set': { 'updated_at': ?2 } }")
+    void appendErrorMessage(
+            UUID id,
+            String message,
+            Instant updatedAt
+    );
+
 
     @Query("{ '_id' : ?0 }")
     @Update(pipeline = {
-            "{ '$set': { 'completed_at': '$$NOW', 'updated_at': '$$NOW' } }"
+            "{ '$set': { 'completed_at': ?1, 'updated_at': ?1 } }"
     })
-    void updateCompletedAtWhereId(UUID jobId);
-
+    void updateCompletedAtWhereId(
+            UUID jobId,
+            Instant completedAt
+    );
 
 
     @Query(value = "{ '_id': ?0 }", fields = "{ 'encoded_media_files': 1 }")
     Optional<UploadJob> findEncodedMediaFilesById(UUID id);
+
 
     @Query("{ '_id': ?0 }")
     @Update("""
@@ -89,13 +123,19 @@ public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
             List<EncodedMediaFile> encodedMediaFiles
     );
 
-    Page<UploadJob>  findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+    Page<UploadJob> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
 
     @Query("{ '_id' : ?0 }")
     @Update(pipeline = {
-            "{ '$set': { 'current_step': ?1, 'updated_at': '$$NOW' } }"
+            "{ '$set': { 'current_step': ?1, 'updated_at': ?2 } }"
     })
-    void updateCurrentStepWhereId(UUID id, String currentStep);
+    void updateCurrentStepWhereId(
+            UUID id,
+            String currentStep,
+            Instant updatedAt
+    );
 
 
     @Query("{ '_id' : ?0 }")
@@ -104,16 +144,20 @@ public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
                     "'status': ?1, " +
                     "'video_file_paths': ?2, " +
                     "'subtitle_file_paths': ?3, " +
-                    "'updated_at': '$$NOW' " +
+                    "'updated_at': ?4 " +
                     "} }"
     })
     void enqueueForEncoding(
             UUID id,
             UploadJob.UploadStatus status,
             Map<String, String> videoFilePaths,
-            Map<String, String> subtitleFilePaths
+            Map<String, String> subtitleFilePaths,
+            Instant updatedAt
     );
 
-    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
-}
 
+    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(
+            UUID userId,
+            Pageable pageable
+    );
+}

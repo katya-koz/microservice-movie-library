@@ -125,6 +125,15 @@ export default function UploadPage() {
     ]);
   }, [mediaType, movieStructure, showStructure]);
 
+  console.log(
+    "subs per episode",
+    showStructure.seasons.flatMap((s) =>
+      s.episodes.map((e) => [e.episodeNumber, e.subtitles.length]),
+    ),
+    "dropped",
+    [...showStructure.droppedSubtitleIds],
+  );
+
   const validation = useMemo(() => {
     if (droppedFiles.length === 0) {
       return {
