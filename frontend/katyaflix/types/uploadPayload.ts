@@ -78,6 +78,17 @@ export function buildShowUpload(
   );
   if (seasonsWithEpisodes.length === 0) return null;
 
+  // Defensive: duplicate season/episode numbers would produce identical form
+  // keys, and the backend would silently keep only one of the files.
+  const seen = new Set<string>();
+  for (const s of seasonsWithEpisodes) {
+    for (const e of s.episodes) {
+      const k = `${s.seasonNumber}:${e.episodeNumber}`;
+      if (seen.has(k)) return null;
+      seen.add(k);
+    }
+  }
+
   const formData = new FormData();
 
   const seasons: SeasonUploadMetadataDto[] = seasonsWithEpisodes.map(
@@ -85,24 +96,25 @@ export function buildShowUpload(
       seasonNumber: season.seasonNumber,
       episodes: season.episodes.map((episode) => {
         const videoKey = `s${season.seasonNumber}_e${episode.episodeNumber}_video`;
-        formData.append(videoKey, episode.video.file, episode.video.name);
+
+        // The multipart part's filename is what the backend writes to disk
+        // (getOriginalFilename), so the canonical name goes there too.
+        const videoName =
+          structure.canonicalNameById.get(episode.video.id) ??
+          episode.video.name;
+        formData.append(videoKey, episode.video.file, videoName);
 
         const files: UploadFileEntryDto[] = [
-          {
-            key: videoKey,
-            fileType: "VIDEO",
-            filename:
-              structure.canonicalNameById.get(episode.video.id) ??
-              episode.video.name,
-          },
+          { key: videoKey, fileType: "VIDEO", filename: videoName },
           ...episode.subtitles.map((sub, i) => {
             const subKey = `${videoKey}_sub${i}`;
-            formData.append(subKey, sub.node.file, sub.node.name);
+            const subName =
+              structure.canonicalNameById.get(sub.node.id) ?? sub.node.name;
+            formData.append(subKey, sub.node.file, subName);
             return {
               key: subKey,
               fileType: "SUBTITLE" as const,
-              filename:
-                structure.canonicalNameById.get(sub.node.id) ?? sub.node.name,
+              filename: subName,
             };
           }),
         ];
@@ -120,7 +132,3 @@ export function buildShowUpload(
   formData.append("metadata", JSON.stringify(metadata));
   return { metadata, formData };
 }
-
-
-
-

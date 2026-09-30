@@ -1,5 +1,10 @@
 export type FileRole = "video" | "subtitle" | "other";
+export type NumberSource = "override" | "parsed" | "sequential";
 
+export interface ShowOverrides {
+  seasons: Record<string, number>; // season folder id -> season number
+  episodes: Record<string, number>; // video file id -> episode number
+}
 export interface TreeFileNode {
   kind: "file";
   id: string; // = relativePath, stable across renders
@@ -26,20 +31,25 @@ export interface EpisodeUpload {
   episodeNumber: number;
   video: TreeFileNode;
   subtitles: SubtitleUpload[];
+  source: NumberSource;
+  conflict: boolean;
 }
 
 export interface SeasonUpload {
   seasonNumber: number;
   folderName: string;
   episodes: EpisodeUpload[];
+  folderId: string;
+  source: NumberSource;
+  conflict: boolean;
 }
 
 export interface ShowStructure {
   seasons: SeasonUpload[];
-  /** Top-level files not inside any folder — invalid placement for a show, skipped. */
   looseFiles: TreeFileNode[];
   canonicalNameById: Map<string, string>;
   seasonLabelByFolderId: Map<string, string>;
+  droppedSubtitleIds: Set<string>;
 }
 
 export interface MovieStructure {

@@ -7,6 +7,7 @@ import TmdbSearch from "@/components/TmdbSearch";
 import UploadDropzone from "@/components/UploadDropzone";
 import FileTree from "@/components/FileTree";
 import UploadJobStatusPanel from "@/components/UploadJobStatusPanel";
+import ShowNumbering from "@/components/ShowNumbering";
 
 import { DroppedFile } from "@/lib/files";
 import {
@@ -15,6 +16,7 @@ import {
   computeShowStructure,
 } from "@/lib/uploadTree";
 import { buildMovieUpload, buildShowUpload } from "@/types/uploadPayload";
+import { ShowOverrides } from "@/types/uploadTree";
 import { TmdbSearchResult } from "@/types/tmdb";
 
 import { useTmdbDetails } from "@/hooks/useTmdbDetails";
@@ -23,6 +25,8 @@ import { useUser } from "@/context/UserContext";
 
 type MediaType = "movie" | "show";
 
+const EMPTY_OVERRIDES: ShowOverrides = { seasons: {}, episodes: {} };
+
 export default function UploadPage() {
   const user = useUser();
   const [mediaType, setMediaType] = useState<MediaType>("movie");
@@ -30,6 +34,7 @@ export default function UploadPage() {
 
   const [droppedFiles, setDroppedFiles] = useState<DroppedFile[]>([]);
   const [progress, setProgress] = useState(0);
+  const [overrides, setOverrides] = useState<ShowOverrides>(EMPTY_OVERRIDES);
 
   const tmdbType = mediaType === "show" ? "tv" : "movie";
 
@@ -56,6 +61,7 @@ export default function UploadPage() {
     setMediaType(next);
     setSelected(null);
     setProgress(0);
+    setOverrides(EMPTY_OVERRIDES);
     uploadMutation.reset();
   }
 
@@ -74,18 +80,49 @@ export default function UploadPage() {
     uploadMutation.reset();
   }
 
+  function clearAll() {
+    setDroppedFiles([]);
+    setProgress(0);
+    setOverrides(EMPTY_OVERRIDES);
+    uploadMutation.reset();
+  }
+
+  function setSeasonNumber(folderId: string, n: number | null) {
+    setOverrides((o) => {
+      const seasons = { ...o.seasons };
+      if (n === null) delete seasons[folderId];
+      else seasons[folderId] = n;
+      return { ...o, seasons };
+    });
+  }
+
+  function setEpisodeNumber(videoId: string, n: number | null) {
+    setOverrides((o) => {
+      const episodes = { ...o.episodes };
+      if (n === null) delete episodes[videoId];
+      else episodes[videoId] = n;
+      return { ...o, episodes };
+    });
+  }
+
   const tree = useMemo(() => buildTree(droppedFiles), [droppedFiles]);
 
   const movieStructure = useMemo(() => computeMovieStructure(tree), [tree]);
 
-  const showStructure = useMemo(() => computeShowStructure(tree), [tree]);
+  const showStructure = useMemo(
+    () => computeShowStructure(tree, overrides),
+    [tree, overrides],
+  );
 
   const ignoredIds = useMemo(() => {
     if (mediaType === "movie") {
       return new Set(movieStructure.extraVideos.map((v) => v.id));
     }
 
-    return new Set(showStructure.looseFiles.map((f) => f.id));
+    return new Set([
+      ...showStructure.looseFiles.map((f) => f.id),
+      ...showStructure.droppedSubtitleIds,
+    ]);
   }, [mediaType, movieStructure, showStructure]);
 
   const validation = useMemo(() => {
@@ -140,6 +177,18 @@ export default function UploadPage() {
       };
     }
 
+    const hasConflict = showStructure.seasons.some(
+      (s) => s.conflict || s.episodes.some((e) => e.conflict),
+    );
+
+    if (hasConflict) {
+      return {
+        ready: false,
+        message:
+          "Some seasons or episodes share the same number. Fix the highlighted ones.",
+      };
+    }
+
     return {
       ready: true,
       message: null,
@@ -171,6 +220,7 @@ export default function UploadPage() {
       });
 
       setDroppedFiles([]);
+      setOverrides(EMPTY_OVERRIDES);
     } catch {
       // Error is exposed through uploadMutation.error.
     }
@@ -358,11 +408,7 @@ export default function UploadPage() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setDroppedFiles([]);
-                    setProgress(0);
-                    uploadMutation.reset();
-                  }}
+                  onClick={clearAll}
                   className="font-mono text-xs uppercase tracking-widest text-paper-muted hover:text-signal-error"
                 >
                   Clear all
@@ -386,6 +432,14 @@ export default function UploadPage() {
                 />
               </div>
             </div>
+          )}
+
+          {mediaType === "show" && showStructure.seasons.length > 0 && (
+            <ShowNumbering
+              structure={showStructure}
+              onSeason={setSeasonNumber}
+              onEpisode={setEpisodeNumber}
+            />
           )}
 
           {mediaType === "show" && showStructure.looseFiles.length > 0 && (
