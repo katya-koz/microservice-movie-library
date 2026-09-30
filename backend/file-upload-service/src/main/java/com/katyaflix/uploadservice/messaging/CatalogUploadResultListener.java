@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+
 @Component
 public class CatalogUploadResultListener {
 
@@ -30,8 +32,8 @@ public class CatalogUploadResultListener {
 
         uploadJobRepository.findById(event.fileUploadId()).ifPresentOrElse(job -> {
             if (event.status() ==  CatalogEventDtos.CatalogUpdateStatus.SUCCESS) {
-                uploadJobRepository.updatePayloadWhereId(job.getId(),event.metadata());
-                uploadJobRepository.updateCatalogValidationStatusWhereId(job.getId(), true);
+                uploadJobRepository.updatePayloadWhereId(job.getId(),event.metadata(), Instant.now());
+                uploadJobRepository.updateCatalogValidationStatusWhereId(job.getId(), true,Instant.now());
                 uploadService.advance(job.getId());
 
             } else {
@@ -50,8 +52,8 @@ public class CatalogUploadResultListener {
         uploadJobRepository.findById(event.fileUploadId()).ifPresentOrElse(job -> {
             if (event.status() == CatalogEventDtos.CatalogUpdateStatus.SUCCESS) {
 
-                uploadJobRepository.updatePayloadWhereId( job.getId(),event.metadata());
-                uploadJobRepository.updateCatalogValidationStatusWhereId( job.getId(), true );
+                uploadJobRepository.updatePayloadWhereId( job.getId(),event.metadata(),Instant.now());
+                uploadJobRepository.updateCatalogValidationStatusWhereId( job.getId(), true ,Instant.now());
                 uploadService.advance(job.getId());
 
             } else {
