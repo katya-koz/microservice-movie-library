@@ -126,7 +126,7 @@ export const CustomVideoPlayer = forwardRef<
 >(function CustomVideoPlayer(
   {
     src,
-    mediaUrlRoot,
+    // mediaUrlRoot,
     mediaType,
     title,
     episodeTitle,
@@ -481,7 +481,7 @@ export const CustomVideoPlayer = forwardRef<
           <track
             key={track.id}
             kind="subtitles"
-            src={`${mediaUrlRoot}${track.filePath}`}
+            src={`${track.filePath}`}
             srcLang={track.languageCode}
             label={track.label}
             default={track.isDefault}
@@ -627,7 +627,7 @@ export const CustomVideoPlayer = forwardRef<
                   <div className="aspect-video w-full bg-slate-800">
                     {nextEpisode?.stillPath && (
                       <img
-                        src={`${mediaUrlRoot}${nextEpisode.stillPath}`}
+                        src={`${nextEpisode.stillPath}`}
                         alt={nextEpisode.title}
                         className="h-full w-full object-cover"
                       />

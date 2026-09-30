@@ -11,7 +11,7 @@ import { useUser } from "@/context/UserContext";
 import { useEpisodeWatchtime, useMovieWatchtime } from "@/hooks/useWatchtime";
 import { useWatchtimeSync } from "@/hooks/useWatchtimeSync";
 import { CustomVideoPlayer } from "@/components/CustomVideoPlayer";
-import { MEDIA_URL_ROOT } from "@/lib/config";
+// import { MEDIA_URL_ROOT } from "@/lib/config";
 // Don't bother resuming if the viewer was basically at the start, or
 // basically at the end (in which case just start over).
 const RESUME_MIN_SECONDS = 10;
@@ -147,7 +147,7 @@ export default function WatchClient() {
         <CustomVideoPlayer
           ref={videoRef}
           src={videoSrc}
-          mediaUrlRoot={MEDIA_URL_ROOT}
+          // mediaUrlRoot={}
           mediaType={mediaType}
           title={
             mediaType === "MOVIE"
