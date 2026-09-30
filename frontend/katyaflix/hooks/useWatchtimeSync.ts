@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { WatchtimeMediaType } from "@/hooks/useWatchtime";
-import { USER_SERVICE_URL } from "@/lib/config";
+import { API_URL_ROOT } from "@/lib/config";
 
 const SYNC_INTERVAL_MS = 15_000; // push a position update roughly every 15s
 
@@ -47,7 +47,7 @@ export function useWatchtimeSync({
       if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
       const watchtimeSeconds = Math.floor(getCurrentTimeRef.current());
 
-      fetch(`${USER_SERVICE_URL}/api/profiles/${userId}/watchtimes`, {
+      fetch(`${API_URL_ROOT}/profiles/${userId}/watchtimes`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

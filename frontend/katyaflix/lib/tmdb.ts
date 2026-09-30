@@ -1,5 +1,5 @@
 import { TmdbDetails, TmdbSearchResult, TmdbSeasonEpisode } from "@/types/tmdb";
-import { UPLOAD_API_URL } from "./config";
+import { API_URL_ROOT } from "./config";
 export type TmdbMediaType = "movie" | "tv";
 
 export async function searchTmdb(
@@ -8,7 +8,7 @@ export async function searchTmdb(
   signal?: AbortSignal,
 ): Promise<TmdbSearchResult[]> {
   const res = await fetch(
-    `${UPLOAD_API_URL}/api/tmdb/search?type=${type}&query=${encodeURIComponent(query)}`,
+    `${API_URL_ROOT}/tmdb/search?type=${type}&query=${encodeURIComponent(query)}`,
     { signal },
   );
 
@@ -21,9 +21,7 @@ export async function getTmdbDetails(
   type: TmdbMediaType,
   id: number,
 ): Promise<TmdbDetails> {
-  const res = await fetch(
-    `${UPLOAD_API_URL}/api/tmdb/details?type=${type}&id=${id}`,
-  );
+  const res = await fetch(`${API_URL_ROOT}/tmdb/details?type=${type}&id=${id}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "TMDB details lookup failed");
   return data as TmdbDetails;
@@ -35,7 +33,7 @@ export async function getTmdbSeasonEpisodes(
   seasonNumber: number,
 ): Promise<TmdbSeasonEpisode[]> {
   const res = await fetch(
-    `${UPLOAD_API_URL}/api/tmdb/season?tvId=${tvId}&season=${seasonNumber}`,
+    `${API_URL_ROOT}/tmdb/season?tvId=${tvId}&season=${seasonNumber}`,
   );
   if (!res.ok) return [];
   const data = await res.json();

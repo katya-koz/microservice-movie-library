@@ -1,7 +1,7 @@
 "use client";
 
 import { fetchProfiles, fetchProfile } from "@/api/profiles";
-import { API_ROOT } from "@/lib/config";
+import { API_URL_ROOT } from "@/lib/config";
 import {
   CreateProfileInput,
   Profile,
@@ -30,7 +30,7 @@ export function useCreateProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateProfileInput): Promise<Profile> => {
-      const res = await fetch(`${API_ROOT}/profiles`, {
+      const res = await fetch(`${API_URL_ROOT}/profiles`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -51,7 +51,7 @@ export function useUpdateProfile() {
       id,
       ...input
     }: UpdateProfileInput): Promise<Profile> => {
-      const res = await fetch(`${API_ROOT}/profiles/${id}`, {
+      const res = await fetch(`${API_URL_ROOT}/profiles/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -70,7 +70,7 @@ export function useDeleteProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const res = await fetch(`${API_ROOT}/profiles/${id}`, {
+      const res = await fetch(`${API_URL_ROOT}/profiles/${id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete profile");

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { UploadJobStatus } from "@/types/uploadJobs";
-import { WS_ROOT } from "@/lib/config";
+import { WS_URL_ROOT } from "@/lib/config";
 import { fetchUploadJob } from "@/api/upload";
 import { isTerminalStatus } from "@/lib/uploadJobs";
 
@@ -46,7 +46,7 @@ export function useUploadJobStatus(
         // not fatal - the socket's initial snapshot will populate this
       });
 
-    const socket = new WebSocket(`${WS_ROOT}/ws/upload-jobs/${jobId}`);
+    const socket = new WebSocket(`${WS_URL_ROOT}/upload-jobs/${jobId}`);
     socketRef.current = socket;
 
     socket.onopen = () => setConnected(true);

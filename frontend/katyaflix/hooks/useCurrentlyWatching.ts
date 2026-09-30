@@ -1,11 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { USER_SERVICE_URL } from "@/lib/config";
-import {
-  CurrentlyWatchingMedia,
-  CurrentEpisode,
-} from "@/types/currentlyWatching";
+
 import {
   fetchCurrentlyWatching,
   fetchCurrentEpisode,

@@ -1,10 +1,4 @@
-import {
-  STATUS_ORDER,
-  UploadJobsPage,
-  UploadJobStatus,
-  UploadStatus,
-} from "@/types/uploadJobs";
-import { UPLOAD_API_URL } from "./config";
+import { STATUS_ORDER, UploadStatus } from "@/types/uploadJobs";
 
 export function statusProgress(status: UploadStatus): number {
   if (status === "FAILURE") return 0;

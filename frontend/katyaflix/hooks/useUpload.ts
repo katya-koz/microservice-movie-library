@@ -1,8 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { uploadWithProgress } from "@/lib/uploadClient";
-
-const UPLOAD_API_URL =
-  process.env.NEXT_PUBLIC_API_ROOT ?? "http://localhost:8080";
+import { API_URL_ROOT } from "@/lib/config";
 export function useUpload() {
   return useMutation({
     mutationFn: async ({
@@ -17,7 +15,7 @@ export function useUpload() {
       formData.append("userId", userId);
 
       const { body } = await uploadWithProgress(
-        `${UPLOAD_API_URL}/uploads`,
+        `${API_URL_ROOT}/uploads`,
         formData,
         onProgress,
       );
