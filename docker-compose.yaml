@@ -177,8 +177,8 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${FILE_UPLOAD_DB_USER}
       MONGO_INITDB_DATABASE: fileuploaddb
 
-    # ports:
-    #   - "27017:27017"
+    ports:
+      - "27017:27017"
 
     volumes:
       - file-upload-db:/data/db
