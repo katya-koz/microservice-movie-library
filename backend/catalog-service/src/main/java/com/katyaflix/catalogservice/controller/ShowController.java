@@ -1,5 +1,6 @@
 package com.katyaflix.catalogservice.controller;
 
+import com.katyaflix.catalogservice.dto.CatalogDtos;
 import com.katyaflix.catalogservice.dto.CatalogDtos.EpisodeDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowSummary;
@@ -25,10 +26,14 @@ public class ShowController {
 
     // GET /api/shows?page=0&size=24&sort=title,asc
     @GetMapping
-    public Page<ShowSummary> getShows(
-            @PageableDefault(size = 24, sort = "title") Pageable pageable
-    ) {
-        return showService.getCatalogPage(pageable);
+    public Page<ShowSummary> getShows(@RequestParam(required = false) String title, @PageableDefault(size = 24, sort = "title") Pageable pageable) {
+        return showService.getCatalogPage(title, pageable);
+    }
+
+    // GET /shows/summary?ids=uuid1,uuid2,uuid3
+    @GetMapping("/summary")
+    public List<CatalogDtos.ShowSummary> getSummaries(@RequestParam List<UUID> ids) {
+        return showService.getSummaries(ids);
     }
 
     // GET /api/shows/{id} -includes season summaries for the dropdown
@@ -38,6 +43,8 @@ public class ShowController {
         return showService.getDetail(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
     }
+
+
 
     // GET /api/shows/{showId}/seasons/{seasonNumber}/episodes
     @GetMapping("/{showId}/seasons/{seasonNumber}/episodes")

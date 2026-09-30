@@ -1,76 +1,13 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-
-export type SubtitleTrack = {
-  id: string;
-  languageCode: string;
-  label: string;
-  filePath: string;
-  isForced: boolean;
-  isSdh: boolean;
-  isDefault: boolean;
-};
-
-export type PlaybackInfo = {
-  mediaFileId: string;
-  filePath: string;
-  containerFormat: string;
-  durationSeconds: number;
-  resolution: string;
-  subtitles: SubtitleTrack[];
-};
-
-// NOTE: the backend snippet didn't include the `NextEpisode` record fields —
-// this shape is a guess based on the naming used elsewhere (EpisodeDetail).
-// Adjust to match once you confirm the real DTO.
-export type NextEpisode = {
-  episodeId: string;
-  episodeNumber: number;
-  seasonNumber: number;
-  title: string;
-  stillPath: string | null;
-};
-
-const PLAYBACK_URL_ROOT =
-  process.env.NEXT_PUBLIC_PLAYBACK_URL_ROOT ?? "http://localhost:8080/playback";
-
-async function fetchMoviePlayback(movieId: string): Promise<PlaybackInfo> {
-  const res = await fetch(`${PLAYBACK_URL_ROOT}/movies/${movieId}`);
-
-  if (!res.ok) {
-    throw new Error(`Failed to load playback info (${res.status})`);
-  }
-
-  return res.json();
-}
-
-async function fetchEpisodePlayback(episodeId: string): Promise<PlaybackInfo> {
-  const res = await fetch(`${PLAYBACK_URL_ROOT}/episodes/${episodeId}`);
-
-  if (!res.ok) {
-    throw new Error(`Failed to load playback info (${res.status})`);
-  }
-
-  return res.json();
-}
-
-async function fetchNextEpisode(
-  episodeId: string,
-): Promise<NextEpisode | null> {
-  const res = await fetch(`${PLAYBACK_URL_ROOT}/episodes/${episodeId}/next`);
-
-  // 404 means this was the last episode of the show — not an error state.
-  if (res.status === 404) {
-    return null;
-  }
-
-  if (!res.ok) {
-    throw new Error(`Failed to load next episode (${res.status})`);
-  }
-
-  return res.json();
-}
+import { fetchCurrentEpisode } from "@/api/currentlyWatching";
+import {
+  fetchMoviePlayback,
+  fetchEpisodePlayback,
+  fetchNextEpisode,
+  fetchNextEpisodeRef,
+} from "@/api/playback";
+import { useMutation, useQuery } from "@tanstack/react-query";
 
 export function useMoviePlayback(movieId: string | undefined) {
   return useQuery({
@@ -102,5 +39,62 @@ export function useNextEpisode(
     enabled: !!episodeId && (options?.enabled ?? true),
     staleTime: 60_000,
     retry: 1,
+  });
+}
+
+function buildEpisodeWatchUrl(
+  showId: string,
+  seasonId: string,
+  episodeId: string,
+) {
+  const params = new URLSearchParams({
+    show_id: showId,
+    season_id: seasonId,
+    episode_id: episodeId,
+  });
+  return `/watch/episode?${params.toString()}`;
+}
+
+const RESUME_THRESHOLD = 0.95;
+
+async function resolveShowPlaybackTarget(
+  userId: string,
+  showId: string,
+): Promise<string | null> {
+  const current = await fetchCurrentEpisode(userId, showId);
+
+  // No watch history for this show yet. TODO: fall back to starting
+  // season 1 episode 1 (needs the catalog EpisodeDetail's id field +
+  // confirmation of whether season numbering starts at 0 or 1).
+  if (!current) return null;
+
+  const progress =
+    current.durationSeconds > 0
+      ? current.watchedSeconds / current.durationSeconds
+      : 0;
+
+  if (progress >= RESUME_THRESHOLD) {
+    const next = await fetchNextEpisodeRef(current.episodeId);
+    if (next) {
+      return buildEpisodeWatchUrl(next.showId, next.seasonId, next.episodeId);
+    }
+    // Last episode of the show — nothing to advance to, fall through and
+    // replay/resume the current one instead.
+  }
+
+  return buildEpisodeWatchUrl(
+    current.showId,
+    current.seasonId,
+    current.episodeId,
+  );
+}
+
+// Resolves where the Play button on a show's detail page should navigate.
+// The watch page itself picks up the saved seek position via
+// useEpisodeWatchtime, so this only needs to decide *which* episode.
+export function useResolveShowPlayback(userId?: string) {
+  return useMutation({
+    mutationFn: (showId: string) =>
+      resolveShowPlaybackTarget(userId as string, showId),
   });
 }

@@ -1,20 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { getMovies } from "@/api/movies";
-
-type UseMoviesOptions = {
-  page?: number;
-  size?: number;
-  sort?: string;
-};
+import { PagedQueryOptions } from "@/types/media";
 
 export function useMovies({
   page = 0,
   size = 24,
   sort = "title,asc",
-}: UseMoviesOptions = {}) {
+  title,
+}: PagedQueryOptions = {}) {
   return useQuery({
-    queryKey: ["movies", page, size, sort],
-    queryFn: () => getMovies(page, size, sort),
+    queryKey: ["movies", page, size, sort, title],
+    queryFn: () => getMovies(page, size, sort, title),
     placeholderData: (previousData) => previousData,
   });
 }

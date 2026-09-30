@@ -7,10 +7,6 @@ import java.util.List;
 import java.util.UUID;
 
 
-import java.time.LocalDate;
-import java.util.List;
-import java.util.UUID;
-
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class FileUploadMetadata {
     public enum FileType { VIDEO, SUBTITLE }
@@ -28,8 +24,11 @@ public class FileUploadMetadata {
         UploadType type();
         long tmdbId();
         List<UploadFileEntryDto> getFiles();
+        List<String> genres();
     }
 
+    /** Mirrors UploadMetadata in the frontend's lib/uploadPayload.ts.
+     *  Reused end-to-end: incoming request -> TMDB-populated -> stored job payload -> finalization input. */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record MovieUploadMetadataDto(
             long tmdbId,
@@ -42,10 +41,16 @@ public class FileUploadMetadata {
             Integer runtimeMinutes,
             String posterPath,
             String backdropPath,
-            List<UploadFileEntryDto> files
+            List<UploadFileEntryDto> files,
+            List<String> genres
     ) implements UploadMetadataDto {
         @Override
         public List<UploadFileEntryDto> getFiles() { return files; }
+
+        @Override
+        public List<String> genres() {
+            return genres;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -60,7 +65,8 @@ public class FileUploadMetadata {
             String status,
             String posterPath,
             String backdropPath,
-            List<SeasonUploadMetadataDto> seasons
+            List<SeasonUploadMetadataDto> seasons,
+            List<String> genres
     ) implements UploadMetadataDto {
         @Override
         public List<UploadFileEntryDto> getFiles() {
@@ -69,6 +75,25 @@ public class FileUploadMetadata {
                     .flatMap(episode -> episode.files().stream())
                     .toList();
         }
+        @Override
+        public List<String> genres() {
+            return genres;
+        }
+
+
+        public EpisodeUploadMetadataDto getEpisodeByTmdbId(Long tmdbId) {
+            return seasons.stream()
+                    .flatMap(season -> season.episodes().stream())
+                    .filter(episode -> tmdbId.equals(episode.tmdbId()))
+                    .findFirst()
+                    .orElseThrow(() ->
+                            new IllegalArgumentException(
+                                    "Episode not found with TMDB ID: " + tmdbId
+                            )
+                    );
+        }
+
+
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

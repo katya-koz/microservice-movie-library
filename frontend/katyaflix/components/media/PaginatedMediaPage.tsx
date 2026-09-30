@@ -1,7 +1,8 @@
 "use client";
 
 import { ReactNode } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useSearchFeature } from "@/components/media/SearchFeature";
 
 type PaginatedMediaPageProps<T> = {
   title: string;
@@ -26,22 +27,38 @@ export default function PaginatedMediaPage<T>({
 }: PaginatedMediaPageProps<T>) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+
+  // Optional: only present when wrapped in <SearchFeature>.
+  const searchFeature = useSearchFeature();
 
   const changePage = (page: number) => {
-    const params = new URLSearchParams(searchParams.toString());
-
+    // Read at click time (not render time), so no useSearchParams / Suspense needed.
+    const params = new URLSearchParams(window.location.search);
     params.set("page", page.toString());
-
     router.push(`${pathname}?${params.toString()}`);
   };
 
-  if (loading) {
-    return (
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        <h1 className="mb-6 text-2xl font-bold">{title}</h1>
+  const showContent = !loading && !error;
 
-        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+  return (
+    <main className="mx-auto max-w-7xl px-6 py-10">
+      {/* Header (same structure in every state so the search input keeps focus) */}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-4xl font-bold">{title}</h1>
+
+        <div className="flex items-center gap-4">
+          {searchFeature?.searchBar}
+
+          {showContent && (
+            <span className="whitespace-nowrap text-sm text-slate-500">
+              {totalElements} {totalElements === 1 ? "item" : "items"}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4">
           {Array.from({ length: 24 }).map((_, index) => (
             <div
               key={index}
@@ -49,48 +66,28 @@ export default function PaginatedMediaPage<T>({
             />
           ))}
         </div>
-      </main>
-    );
-  }
-
-  if (error) {
-    return (
-      <main className="mx-auto max-w-7xl px-6 py-8">
-        <h1 className="text-2xl font-bold">{title}</h1>
-
-        <p className="mt-4 text-red-400">
-          Failed to load {title.toLowerCase()}.
-        </p>
-
-        <p className="mt-2 text-sm text-slate-500">{error.message}</p>
-      </main>
-    );
-  }
-
-  return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{title}</h1>
-
-        <span className="text-sm text-slate-500">
-          {totalElements} {totalElements === 1 ? "item" : "items"}
-        </span>
-      </div>
-
-      {/* Grid */}
-      {media.length > 0 ? (
-        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+      ) : error ? (
+        <>
+          <p className="mt-4 text-red-400">
+            Failed to load {title.toLowerCase()}.
+          </p>
+          <p className="mt-2 text-sm text-slate-500">{error.message}</p>
+        </>
+      ) : media.length > 0 ? (
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4">
           {media.map(renderItem)}
         </div>
       ) : (
         <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-slate-800">
-          <p className="text-slate-500">No {title.toLowerCase()} found.</p>
+          <p className="text-slate-500">
+            {searchFeature?.query
+              ? `No ${title.toLowerCase()} found for "${searchFeature.query}".`
+              : `No ${title.toLowerCase()} found.`}
+          </p>
         </div>
       )}
 
-      {/* Pagination */}
-      {totalPages > 1 && (
+      {showContent && totalPages > 1 && (
         <div className="mt-10 flex items-center justify-center gap-4">
           <button
             disabled={currentPage === 1}

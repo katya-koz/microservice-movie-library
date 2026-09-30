@@ -49,22 +49,18 @@ public class TmdbService {
     private FileUploadMetadata.MovieUploadMetadataDto moviePopulate(FileUploadMetadata.MovieUploadMetadataDto upload)
     {
         String url = TMDB_API_BASE + "/movie/" + upload.tmdbId() + "?api_key=" + encode(apiKey) + "&append_to_response=credits";
-
-        System.out.println("TMDB URL = " + url);
         JsonNode movieData = getJson(url);
 
         String title = textOrNull(movieData, "title");
-
+        List<String> genres = new ArrayList<>();
+        for (JsonNode g : movieData.path("genres")) {
+            genres.add(g.path("name").asText());
+        }
         LocalDate releaseDate = parseDate(textOrNull(movieData, "release_date"));
-
         String overview = textOrDefault(movieData, "overview", "");
-
         String posterPath = textOrNull(movieData, "poster_path");
-
         String backdropPath = textOrNull(movieData, "backdrop_path");
-
         List<String> creators = new ArrayList<>();
-
         for (JsonNode crewMember : movieData.path("credits").path("crew")) {
 
             if ("Director".equals(textOrNull(crewMember, "job"))) {
@@ -95,7 +91,8 @@ public class TmdbService {
                 runtimeMinutes,
                 posterPath,
                 backdropPath,
-                upload.files()
+                upload.files(),
+                genres
         );
     }
 
@@ -104,17 +101,15 @@ public class TmdbService {
         String url = TMDB_API_BASE + "/tv/" + upload.tmdbId() + "?api_key=" + encode(apiKey);
 
         JsonNode showData = getJson(url);
-
+        List<String> genres = new ArrayList<>();
+        for (JsonNode g : showData.path("genres")) {
+            genres.add(g.path("name").asText());
+        }
         String title = textOrNull(showData, "name");
-
         LocalDate firstAirDate = parseDate(textOrNull(showData, "first_air_date"));
-
         String overview = textOrDefault(showData, "overview", "");
-
         String status = textOrNull(showData, "status");
-
         String posterPath = textOrNull(showData, "poster_path");
-
         String backdropPath = textOrNull(showData, "backdrop_path");
 
         // tv creators
@@ -134,17 +129,11 @@ public class TmdbService {
         for (FileUploadMetadata.SeasonUploadMetadataDto uploadSeason : upload.seasons()) {
 
             String seasonUrl = TMDB_API_BASE + "/tv/" + upload.tmdbId() + "/season/" + uploadSeason.seasonNumber() + "?api_key=" + encode(apiKey);
-
             JsonNode seasonData = getJson(seasonUrl);
-
             long tmdbSeasonId = seasonData.path("id").asLong();
-
             String seasonTitle = textOrNull(seasonData, "name");
-
             String seasonOverview = textOrDefault(seasonData, "overview", "");
-
             LocalDate seasonAirDate = parseDate(textOrNull(seasonData, "air_date"));
-
             String seasonPosterPath = textOrNull(seasonData, "poster_path");
 
             List<FileUploadMetadata.EpisodeUploadMetadataDto> episodes = new ArrayList<>();
@@ -233,7 +222,8 @@ public class TmdbService {
                 status,
                 posterPath,
                 backdropPath,
-                seasons
+                seasons,
+                genres
         );
     }
 

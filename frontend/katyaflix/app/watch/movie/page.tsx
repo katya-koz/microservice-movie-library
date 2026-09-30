@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import WatchClient from "../WatchClient";
+import WatchClient from "@/components/watch/WatchClient";
 
 export default function WatchMoviePage() {
   return (

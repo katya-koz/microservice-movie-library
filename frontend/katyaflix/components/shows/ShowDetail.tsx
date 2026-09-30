@@ -1,6 +1,7 @@
 "use client";
 
 import { useShowDetail } from "@/hooks/useShowDetail";
+import { useUser } from "@/context/UserContext";
 import DetailPage from "../media/DetailPage";
 import SeasonEpisodesSection from "./SeasonEpisodesSection";
 type ShowDetailProps = {
@@ -10,13 +11,37 @@ type ShowDetailProps = {
 
 export default function ShowDetail({ showId, modal = false }: ShowDetailProps) {
   const { data: show, isLoading, error } = useShowDetail(showId);
-
+  const { user } = useUser();
   if (isLoading) {
-    return <DetailPage isLoading={true} />;
+    return (
+      <DetailPage
+        isLoading={true}
+        title={null}
+        backdropPath={null}
+        subtitle={undefined}
+        overview={null}
+        genres={null}
+        error={null}
+        type="SHOW"
+        id={"null_id"}
+      />
+    );
   }
 
   if (error || !show) {
-    return <DetailPage isLoading={false} error={error} />;
+    return (
+      <DetailPage
+        isLoading={false}
+        error={error}
+        title={null}
+        backdropPath={null}
+        subtitle={undefined}
+        overview={null}
+        genres={null}
+        type="SHOW"
+        id={"null_id"}
+      />
+    );
   }
 
   const firstAirYear = show.firstAirDate
@@ -54,9 +79,15 @@ export default function ShowDetail({ showId, modal = false }: ShowDetailProps) {
       overview={show.overview}
       isLoading={isLoading}
       error={error}
+      genres={show.genres}
       type="SHOW"
       id={show.id}
-      extraContent={<SeasonEpisodesSection showId={show.id} />}
+      extraContent={
+        <SeasonEpisodesSection
+          userId={user?.id ?? "no_user"}
+          showId={show.id}
+        />
+      }
     />
   );
 }

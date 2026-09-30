@@ -3,25 +3,16 @@ import { isVideoFile } from "./video";
 import { subtitleExt } from "./subtitles";
 import { guessLanguageCode } from "./languageGuess";
 import { naturalCompare } from "./naturalSort";
-
-export type FileRole = "video" | "subtitle" | "other";
-
-export interface TreeFileNode {
-  kind: "file";
-  id: string; // = relativePath, stable across renders
-  name: string;
-  file: File;
-  role: FileRole;
-}
-
-export interface TreeFolderNode {
-  kind: "folder";
-  id: string;
-  name: string;
-  children: TreeNode[];
-}
-
-export type TreeNode = TreeFileNode | TreeFolderNode;
+import {
+  EpisodeUpload,
+  FileRole,
+  MovieStructure,
+  SeasonUpload,
+  ShowStructure,
+  SubtitleUpload,
+  TreeFileNode,
+  TreeFolderNode,
+} from "@/types/uploadTree";
 
 function fileRole(name: string): FileRole {
   if (isVideoFile(name)) return "video";
@@ -105,40 +96,6 @@ function collectDescendantFiles(node: TreeFolderNode): TreeFileNode[] {
   return out;
 }
 
-// ----------------------------------------------------------------------------
-// Shows: every top-level dropped folder becomes a season, numbered by natural
-// sort of the folder name — NOT by whatever the folder happens to be called.
-// Video files inside are numbered by natural filename order and renamed to
-// SxxEPyy. Subtitles are paired to an episode by filename-stem similarity.
-// ----------------------------------------------------------------------------
-
-export interface SubtitleUpload {
-  node: TreeFileNode;
-  languageCode: string;
-  guessed: boolean;
-}
-
-export interface EpisodeUpload {
-  seasonNumber: number;
-  episodeNumber: number;
-  video: TreeFileNode;
-  subtitles: SubtitleUpload[];
-}
-
-export interface SeasonUpload {
-  seasonNumber: number;
-  folderName: string;
-  episodes: EpisodeUpload[];
-}
-
-export interface ShowStructure {
-  seasons: SeasonUpload[];
-  /** Top-level files not inside any folder — invalid placement for a show, skipped. */
-  looseFiles: TreeFileNode[];
-  canonicalNameById: Map<string, string>;
-  seasonLabelByFolderId: Map<string, string>;
-}
-
 export function computeShowStructure(tree: TreeFolderNode): ShowStructure {
   const topFolders = tree.children.filter(
     (c): c is TreeFolderNode => c.kind === "folder",
@@ -205,13 +162,6 @@ export function computeShowStructure(tree: TreeFolderNode): ShowStructure {
 // Movies: exactly one top-level video file, plus any number of top-level
 // subtitle files. Folders aren't expected at all. Movies are not renamed.
 // ----------------------------------------------------------------------------
-
-export interface MovieStructure {
-  video: TreeFileNode | null;
-  subtitles: SubtitleUpload[];
-  extraVideos: TreeFileNode[];
-  hasFolders: boolean;
-}
 
 export function computeMovieStructure(tree: TreeFolderNode): MovieStructure {
   const hasFolders = tree.children.some((c) => c.kind === "folder");

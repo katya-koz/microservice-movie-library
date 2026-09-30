@@ -1,0 +1,866 @@
+
+================================================================================
+FILE: useCatalogSummaries.ts
+================================================================================
+
+"use client";
+
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { MediaRef, MediaSummary, RawSummary } from "@/types/media";
+import { fetchMovieSummaries } from "@/api/movies";
+import { fetchShowSummaries } from "@/api/shows";
+
+// Splits a mixed list of {mediaType, mediaId} refs (e.g. from the
+// watchlist or currently-watching endpoints) into the two catalog summary
+// calls, then re-merges the results in the original input order so
+// callers can render a stable carousel.
+export function useMediaSummaries(items: MediaRef[]) {
+  const movieIds = useMemo(
+    () => items.filter((i) => i.mediaType === "MOVIE").map((i) => i.mediaId),
+    [items],
+  );
+  const showIds = useMemo(
+    () => items.filter((i) => i.mediaType === "SHOW").map((i) => i.mediaId),
+    [items],
+  );
+
+  const moviesQuery = useQuery({
+    queryKey: ["movie-summaries", movieIds],
+    queryFn: () => fetchMovieSummaries(movieIds),
+    enabled: movieIds.length > 0,
+  });
+
+  const showsQuery = useQuery({
+    queryKey: ["show-summaries", showIds],
+    queryFn: () => fetchShowSummaries(showIds),
+    enabled: showIds.length > 0,
+  });
+
+  const data = useMemo(() => {
+    const movieById = new Map((moviesQuery.data ?? []).map((m) => [m.id, m]));
+    const showById = new Map((showsQuery.data ?? []).map((s) => [s.id, s]));
+
+    return items
+      .map((item): MediaSummary | null => {
+        const raw =
+          item.mediaType === "MOVIE"
+            ? movieById.get(item.mediaId)
+            : showById.get(item.mediaId);
+        if (!raw) return null;
+        return { ...raw, mediaType: item.mediaType };
+      })
+      .filter((m): m is MediaSummary => m !== null);
+  }, [items, moviesQuery.data, showsQuery.data]);
+
+  return {
+    data,
+    isLoading:
+      (movieIds.length > 0 && moviesQuery.isLoading) ||
+      (showIds.length > 0 && showsQuery.isLoading),
+    error: moviesQuery.error ?? showsQuery.error,
+  };
+}
+
+
+
+================================================================================
+FILE: useCurrentlyWatching.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { USER_SERVICE_URL } from "@/lib/config";
+import {
+  CurrentlyWatchingMedia,
+  CurrentEpisode,
+} from "@/types/currentlyWatching";
+import {
+  fetchCurrentlyWatching,
+  fetchCurrentEpisode,
+} from "@/api/currentlyWatching";
+
+// The "Continue Watching" row for the home page — movies and shows the
+// user has an in-progress watchtime for.
+export function useCurrentlyWatching(userId?: string) {
+  return useQuery({
+    queryKey: ["currently-watching", userId],
+    queryFn: () => fetchCurrentlyWatching(userId as string),
+    enabled: !!userId,
+  });
+}
+
+// Where a specific show's in-progress episode is. Used by the Play button
+// on the show detail page.
+export function useCurrentEpisode(userId?: string, showId?: string) {
+  return useQuery({
+    queryKey: ["current-episode", userId, showId],
+    queryFn: () => fetchCurrentEpisode(userId as string, showId as string),
+    enabled: !!userId && !!showId,
+  });
+}
+
+
+
+================================================================================
+FILE: useMovieDetail.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { getMovieDetail } from "@/api/movies";
+
+export function useMovieDetail(id: string) {
+  return useQuery({
+    queryKey: ["movie", id],
+    queryFn: () => getMovieDetail(id),
+    enabled: !!id,
+  });
+}
+
+
+
+================================================================================
+FILE: useMovies.ts
+================================================================================
+
+import { useQuery } from "@tanstack/react-query";
+import { getMovies } from "@/api/movies";
+import { PagedQueryOptions } from "@/types/media";
+
+export function useMovies({
+  page = 0,
+  size = 24,
+  sort = "title,asc",
+  title,
+}: PagedQueryOptions = {}) {
+  return useQuery({
+    queryKey: ["movies", page, size, sort, title],
+    queryFn: () => getMovies(page, size, sort, title),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+
+
+================================================================================
+FILE: usePlayback.ts
+================================================================================
+
+"use client";
+
+import { fetchCurrentEpisode } from "@/api/currentlyWatching";
+import {
+  fetchMoviePlayback,
+  fetchEpisodePlayback,
+  fetchNextEpisode,
+  fetchNextEpisodeRef,
+} from "@/api/playback";
+import { useMutation, useQuery } from "@tanstack/react-query";
+
+export function useMoviePlayback(movieId: string | undefined) {
+  return useQuery({
+    queryKey: ["playback", "movie", movieId],
+    queryFn: () => fetchMoviePlayback(movieId as string),
+    enabled: !!movieId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useEpisodePlayback(episodeId: string | undefined) {
+  return useQuery({
+    queryKey: ["playback", "episode", episodeId],
+    queryFn: () => fetchEpisodePlayback(episodeId as string),
+    enabled: !!episodeId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useNextEpisode(
+  episodeId: string | undefined,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ["playback", "episode", episodeId, "next"],
+    queryFn: () => fetchNextEpisode(episodeId as string),
+    enabled: !!episodeId && (options?.enabled ?? true),
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+function buildEpisodeWatchUrl(
+  showId: string,
+  seasonId: string,
+  episodeId: string,
+) {
+  const params = new URLSearchParams({
+    show_id: showId,
+    season_id: seasonId,
+    episode_id: episodeId,
+  });
+  return `/watch/episode?${params.toString()}`;
+}
+
+const RESUME_THRESHOLD = 0.95;
+
+async function resolveShowPlaybackTarget(
+  userId: string,
+  showId: string,
+): Promise<string | null> {
+  const current = await fetchCurrentEpisode(userId, showId);
+
+  // No watch history for this show yet. TODO: fall back to starting
+  // season 1 episode 1 (needs the catalog EpisodeDetail's id field +
+  // confirmation of whether season numbering starts at 0 or 1).
+  if (!current) return null;
+
+  const progress =
+    current.durationSeconds > 0
+      ? current.watchedSeconds / current.durationSeconds
+      : 0;
+
+  if (progress >= RESUME_THRESHOLD) {
+    const next = await fetchNextEpisodeRef(current.episodeId);
+    if (next) {
+      return buildEpisodeWatchUrl(next.showId, next.seasonId, next.episodeId);
+    }
+    // Last episode of the show — nothing to advance to, fall through and
+    // replay/resume the current one instead.
+  }
+
+  return buildEpisodeWatchUrl(
+    current.showId,
+    current.seasonId,
+    current.episodeId,
+  );
+}
+
+// Resolves where the Play button on a show's detail page should navigate.
+// The watch page itself picks up the saved seek position via
+// useEpisodeWatchtime, so this only needs to decide *which* episode.
+export function useResolveShowPlayback(userId?: string) {
+  return useMutation({
+    mutationFn: (showId: string) =>
+      resolveShowPlaybackTarget(userId as string, showId),
+  });
+}
+
+
+
+================================================================================
+FILE: useProfilePictures.ts
+================================================================================
+
+"use client";
+
+import { fetchProfilePictures } from "@/api/profilePictures";
+import { useQuery } from "@tanstack/react-query";
+
+// All selectable avatar images, for the profile picture editor carousel.
+export function useProfilePictures() {
+  return useQuery({
+    queryKey: ["profile-pictures"],
+    queryFn: fetchProfilePictures,
+  });
+}
+
+
+
+================================================================================
+FILE: useProfiles.ts
+================================================================================
+
+"use client";
+
+import { fetchProfiles, fetchProfile } from "@/api/profiles";
+import { API_ROOT } from "@/lib/config";
+import {
+  CreateProfileInput,
+  Profile,
+  UpdateProfileInput,
+} from "@/types/profiles";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+// See all profiles, for the profile selector.
+export function useProfiles() {
+  return useQuery({
+    queryKey: ["profiles"],
+    queryFn: fetchProfiles,
+  });
+}
+
+// A single profile, for the editor screen.
+export function useProfile(id?: string) {
+  return useQuery({
+    queryKey: ["profile", id],
+    queryFn: () => fetchProfile(id as string),
+    enabled: !!id,
+  });
+}
+
+export function useCreateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: CreateProfileInput): Promise<Profile> => {
+      const res = await fetch(`${API_ROOT}/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw new Error("Failed to create profile");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    },
+  });
+}
+
+export function useUpdateProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      ...input
+    }: UpdateProfileInput): Promise<Profile> => {
+      const res = await fetch(`${API_ROOT}/profiles/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw new Error("Failed to update profile");
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+      queryClient.invalidateQueries({ queryKey: ["profile", variables.id] });
+    },
+  });
+}
+
+export function useDeleteProfile() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const res = await fetch(`${API_ROOT}/profiles/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete profile");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["profiles"] });
+    },
+  });
+}
+
+
+
+================================================================================
+FILE: useRequireProfile.ts
+================================================================================
+
+"use client";
+
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useUser } from "@/context/UserContext";
+
+/**
+ * Sends the visitor to /profiles if no profile is active yet. Call this once
+ * near the root of the app (see components/profiles/ProfileGate.tsx) rather
+ * than in every page.
+ */
+export function useRequireProfile() {
+  const { user, isLoading } = useUser();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (!isLoading && !user && !pathname.startsWith("/profiles")) {
+      router.replace("/profiles");
+    }
+  }, [isLoading, user, pathname, router]);
+}
+
+
+
+================================================================================
+FILE: useShowDetail.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { getShowDetail } from "@/api/shows";
+
+export function useShowDetail(id: string) {
+  return useQuery({
+    queryKey: ["show", id],
+    queryFn: () => getShowDetail(id),
+    enabled: !!id,
+  });
+}
+
+
+
+================================================================================
+FILE: useShowEpisodes.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { getSeasonEpisodes } from "@/api/shows";
+
+export function useSeasonEpisodes(showId: string, seasonNumber: number | null) {
+  return useQuery({
+    queryKey: ["show", showId, "season", seasonNumber, "episodes"],
+    queryFn: () => getSeasonEpisodes(showId, seasonNumber as number),
+    enabled: !!showId && seasonNumber !== null,
+  });
+}
+
+
+
+================================================================================
+FILE: useShows.ts
+================================================================================
+
+import { useQuery } from "@tanstack/react-query";
+import { getShows } from "@/api/shows";
+import { PagedQueryOptions } from "@/types/media";
+
+export function useShows({
+  page = 0,
+  size = 24,
+  sort = "title,asc",
+  title,
+}: PagedQueryOptions = {}) {
+  return useQuery({
+    queryKey: ["shows", page, size, sort, title],
+    queryFn: () => getShows(page, size, sort, title),
+    placeholderData: (previousData) => previousData,
+  });
+}
+
+
+
+================================================================================
+FILE: useShowSeasons.ts
+================================================================================
+
+"use client";
+
+import { useShowDetail } from "@/hooks/useShowDetail";
+import type { SeasonSummary } from "@/types/show";
+
+type UseShowSeasonsResult = {
+  data: SeasonSummary[] | undefined;
+  isLoading: boolean;
+  error: Error | null;
+};
+
+export function useShowSeasons(showId: string): UseShowSeasonsResult {
+  const { data, isLoading, error } = useShowDetail(showId);
+  return { data: data?.seasons, isLoading, error };
+}
+
+
+
+================================================================================
+FILE: useTmdbDetails.ts
+================================================================================
+
+import { useQuery } from "@tanstack/react-query";
+import { getTmdbDetails } from "@/lib/tmdb";
+
+export function useTmdbDetails(type: "movie" | "tv", id: number | null) {
+  return useQuery({
+    queryKey: ["tmdb-details", type, id],
+    queryFn: () => getTmdbDetails(type, id!),
+    enabled: id !== null,
+  });
+}
+
+
+
+================================================================================
+FILE: useUpload.ts
+================================================================================
+
+import { useMutation } from "@tanstack/react-query";
+import { uploadWithProgress } from "@/lib/uploadClient";
+
+const UPLOAD_API_URL =
+  process.env.NEXT_PUBLIC_API_ROOT ?? "http://localhost:8080";
+export function useUpload() {
+  return useMutation({
+    mutationFn: async ({
+      formData,
+      userId,
+      onProgress,
+    }: {
+      formData: FormData;
+      userId: string;
+      onProgress: (progress: number) => void;
+    }) => {
+      formData.append("userId", userId);
+
+      const { body } = await uploadWithProgress(
+        `${UPLOAD_API_URL}/uploads`,
+        formData,
+        onProgress,
+      );
+
+      return {
+        jobId: (body as { jobId?: string } | null)?.jobId ?? "unknown",
+      };
+    },
+  });
+}
+
+
+
+================================================================================
+FILE: useUploadJobs.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+
+import { fetchUploadJobs } from "@/api/upload";
+
+export function useUploadJobs(page = 0, size = 20, userId?: string) {
+  return useQuery({
+    queryKey: ["upload-jobs", page, size, userId],
+    queryFn: () => fetchUploadJobs(page, size, userId as string),
+    enabled: !!userId,
+    // light polling as a fallback for the list view; the selected job's
+    // detail panel gets true live updates over the websocket instead
+    refetchInterval: 15000,
+  });
+}
+
+
+
+================================================================================
+FILE: useUploadJobStatus.ts
+================================================================================
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+import { UploadJobStatus } from "@/types/uploadJobs";
+import { WS_ROOT } from "@/lib/config";
+import { fetchUploadJob } from "@/api/upload";
+import { isTerminalStatus } from "@/lib/uploadJobs";
+
+interface UseUploadJobStatusResult {
+  job: UploadJobStatus | null;
+  connected: boolean;
+  error: string | null;
+  isTerminal: boolean;
+}
+
+/**
+ * Opens a websocket to /ws/upload-jobs/{jobId} and keeps `job` in sync with
+ * whatever the server pushes (see UploadJobWebSocketHandler /
+ * UploadJobChangeStreamWatcher on the backend). Falls back to a single REST
+ * fetch for the very first paint so there's something to show before the
+ * socket handshake completes.
+ */
+export function useUploadJobStatus(
+  jobId: string | null,
+): UseUploadJobStatusResult {
+  const [job, setJob] = useState<UploadJobStatus | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!jobId) {
+      setJob(null);
+      return;
+    }
+
+    let cancelled = false;
+    setError(null);
+
+    fetchUploadJob(jobId)
+      .then((initial) => {
+        if (!cancelled) setJob(initial);
+      })
+      .catch(() => {
+        // not fatal - the socket's initial snapshot will populate this
+      });
+
+    const socket = new WebSocket(`${WS_ROOT}/ws/upload-jobs/${jobId}`);
+    socketRef.current = socket;
+
+    socket.onopen = () => setConnected(true);
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as UploadJobStatus;
+        setJob(data);
+      } catch {
+        // ignore malformed payloads rather than crashing the view
+      }
+    };
+
+    socket.onerror = () =>
+      setError("Lost connection to the job status stream.");
+
+    socket.onclose = () => setConnected(false);
+
+    return () => {
+      cancelled = true;
+      socket.close();
+      socketRef.current = null;
+    };
+  }, [jobId]);
+
+  return {
+    job,
+    connected,
+    error,
+    isTerminal: job ? isTerminalStatus(job.status) : false,
+  };
+}
+
+
+
+================================================================================
+FILE: useWatchlist.ts
+================================================================================
+
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { USER_SERVICE_URL } from "@/lib/config";
+import { fetchWatchlist } from "@/api/watchlist";
+import { MediaType } from "@/types/media";
+
+// Everything on a profile's list — for the "My List" page. Combine this
+// with useMediaSummaries to render title cards.
+export function useWatchlist(userId?: string) {
+  return useQuery({
+    queryKey: ["watchlist", userId],
+    queryFn: () => fetchWatchlist(userId as string),
+    enabled: !!userId,
+  });
+}
+
+// Convenience hook for a single detail page's "My List" toggle button.
+export function useIsOnWatchlist(
+  userId: string | undefined,
+  mediaType: MediaType,
+  mediaId: string,
+) {
+  const { data } = useWatchlist(userId);
+  return !!data?.some(
+    (item) => item.mediaType === mediaType && item.mediaId === mediaId,
+  );
+}
+
+export function useAddToWatchlist(userId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      mediaType,
+      mediaId,
+    }: {
+      mediaType: MediaType;
+      mediaId: string;
+    }) => {
+      if (!userId) throw new Error("No active profile");
+      const res = await fetch(
+        `${USER_SERVICE_URL}/api/profiles/${userId}/watchlist`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mediaType, mediaId }),
+        },
+      );
+      if (!res.ok) throw new Error("Failed to add to list");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["watchlist", userId] });
+    },
+  });
+}
+
+export function useRemoveFromWatchlist(userId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      mediaType,
+      mediaId,
+    }: {
+      mediaType: MediaType;
+      mediaId: string;
+    }) => {
+      if (!userId) throw new Error("No active profile");
+      const params = new URLSearchParams({ mediaType, mediaId });
+      const res = await fetch(
+        `${USER_SERVICE_URL}/api/profiles/${userId}/watchlist?${params.toString()}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) throw new Error("Failed to remove from list");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["watchlist", userId] });
+    },
+  });
+}
+
+
+
+================================================================================
+FILE: useWatchtime.ts
+================================================================================
+
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import {
+  fetchAllWatchtimes,
+  fetchMovieWatchtime,
+  fetchEpisodeWatchtime,
+  fetchEpisodeWatchtimes,
+} from "@/api/watchtime";
+
+export type { WatchtimeMediaType, Watchtime } from "@/types/watchtime";
+
+// All watch times for a profile in one call — use this for profile-wide
+// views like a "continue watching" row.
+export function useWatchtimes(userId?: string) {
+  return useQuery({
+    queryKey: ["watchtimes", userId],
+    queryFn: () => fetchAllWatchtimes(userId as string),
+    enabled: !!userId,
+  });
+}
+
+// Single movie's watch time — used by the player to resume from where the
+// user left off.
+export function useMovieWatchtime(userId?: string, movieId?: string) {
+  return useQuery({
+    queryKey: ["watchtime", "movie", userId, movieId],
+    queryFn: () => fetchMovieWatchtime(userId as string, movieId as string),
+    enabled: !!userId && !!movieId,
+  });
+}
+
+export function useEpisodeWatchtime(userId?: string, episodeId?: string) {
+  return useQuery({
+    queryKey: ["watchtime", "episode", userId, episodeId],
+    queryFn: () => fetchEpisodeWatchtime(userId as string, episodeId as string),
+    enabled: !!userId && !!episodeId,
+  });
+}
+
+// Watch times for a specific set of episode ids in one call — use this to
+// render progress bars across a single season's episode list without
+// pulling down the profile's entire watch history via useWatchtimes.
+export function useEpisodeWatchtimes(userId?: string, episodeIds?: string[]) {
+  return useQuery({
+    queryKey: ["watchtime", "episodes", userId, episodeIds],
+    queryFn: () =>
+      fetchEpisodeWatchtimes(userId as string, episodeIds as string[]),
+    enabled: !!userId && !!episodeIds?.length,
+  });
+}
+
+
+
+================================================================================
+FILE: useWatchtimeSync.ts
+================================================================================
+
+"use client";
+
+import { useEffect, useRef } from "react";
+import type { WatchtimeMediaType } from "@/hooks/useWatchtime";
+import { USER_SERVICE_URL } from "@/lib/config";
+
+const SYNC_INTERVAL_MS = 15_000; // push a position update roughly every 15s
+
+type UseWatchtimeSyncArgs = {
+  userId?: string;
+  mediaType: WatchtimeMediaType;
+  mediaId?: string;
+  // Only meaningful (and should only be passed) when mediaType is
+  // "EPISODE" — the show/season this episode belongs to.
+  showId?: string;
+  seasonId?: string;
+  // Called to read the current playback position, e.g.
+  // () => videoRef.current?.currentTime ?? 0
+  getCurrentTimeSeconds: () => number;
+  // Called to read the total video duration, e.g.
+  // () => videoRef.current?.duration ?? 0
+  getDurationSeconds: () => number;
+  // Only sync while this is true (i.e. actually playing).
+  isActive: boolean;
+};
+export function useWatchtimeSync({
+  userId,
+  mediaType,
+  mediaId,
+  showId,
+  seasonId,
+  getCurrentTimeSeconds,
+  getDurationSeconds,
+  isActive,
+}: UseWatchtimeSyncArgs) {
+  const getCurrentTimeRef = useRef(getCurrentTimeSeconds);
+  getCurrentTimeRef.current = getCurrentTimeSeconds;
+
+  const getDurationRef = useRef(getDurationSeconds);
+  getDurationRef.current = getDurationSeconds;
+
+  useEffect(() => {
+    if (!isActive || !userId || !mediaId) return;
+
+    const sendUpdate = () => {
+      const durationSeconds = Math.floor(getDurationRef.current());
+      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
+      const watchtimeSeconds = Math.floor(getCurrentTimeRef.current());
+
+      fetch(`${USER_SERVICE_URL}/api/profiles/${userId}/watchtimes`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mediaType,
+          mediaId,
+          watchtimeSeconds,
+          durationSeconds,
+          // Only set for episodes; JSON.stringify drops undefined keys
+          // entirely, so a movie PUT simply won't include these fields.
+          showId,
+          seasonId,
+        }),
+        keepalive: true,
+      }).catch((err) => {
+        console.error("Failed to sync watchtime", err);
+      });
+    };
+
+    const interval = setInterval(sendUpdate, SYNC_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      sendUpdate(); // final flush
+    };
+  }, [isActive, userId, mediaId, mediaType, showId, seasonId]);
+}
+
+

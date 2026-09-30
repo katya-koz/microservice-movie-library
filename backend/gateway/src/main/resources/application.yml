@@ -24,4 +24,5 @@ spring:
                   - PUT
                   - DELETE
                   - OPTIONS
+                  - PATCH
                 allowCredentials: true

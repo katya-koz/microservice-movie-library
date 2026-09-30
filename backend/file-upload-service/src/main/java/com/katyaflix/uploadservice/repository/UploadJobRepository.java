@@ -3,11 +3,14 @@ package com.katyaflix.uploadservice.repository;
 import com.katyaflix.uploadservice.dto.EncodedMediaFile;
 import com.katyaflix.uploadservice.dto.FileUploadMetadata;
 import com.katyaflix.uploadservice.entity.UploadJob;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import org.springframework.data.mongodb.repository.Update;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -86,5 +89,31 @@ public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
             List<EncodedMediaFile> encodedMediaFiles
     );
 
+    Page<UploadJob>  findAllByOrderByCreatedAtDesc(Pageable pageable);
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { 'current_step': ?1, 'updated_at': '$$NOW' } }"
+    })
+    void updateCurrentStepWhereId(UUID id, String currentStep);
+
+
+    @Query("{ '_id' : ?0 }")
+    @Update(pipeline = {
+            "{ '$set': { " +
+                    "'status': ?1, " +
+                    "'video_file_paths': ?2, " +
+                    "'subtitle_file_paths': ?3, " +
+                    "'updated_at': '$$NOW' " +
+                    "} }"
+    })
+    void enqueueForEncoding(
+            UUID id,
+            UploadJob.UploadStatus status,
+            Map<String, String> videoFilePaths,
+            Map<String, String> subtitleFilePaths
+    );
+
+    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 }
 

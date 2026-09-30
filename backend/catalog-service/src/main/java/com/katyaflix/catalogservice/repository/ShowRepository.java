@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -23,9 +24,9 @@ public interface ShowRepository extends JpaRepository<Show, UUID> {
     }
 
     Page<ShowCatalogProjection> findAllProjectedBy(Pageable pageable);
-
+    Page<ShowCatalogProjection> findByTitleContainingIgnoreCase(String title, Pageable pageable);
     Optional<Show> findByTmdbId(long tmdbId);
-
+    List<ShowCatalogProjection> findByIdIn(List<UUID> ids);
 
 
     @Modifying

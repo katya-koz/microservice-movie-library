@@ -24,6 +24,7 @@ public class FileUploadMetadata {
         UploadType type();
         long tmdbId();
         List<UploadFileEntryDto> getFiles();
+        List<String> genres();
     }
 
     /** Mirrors UploadMetadata in the frontend's lib/uploadPayload.ts.
@@ -40,10 +41,16 @@ public class FileUploadMetadata {
             Integer runtimeMinutes,
             String posterPath,
             String backdropPath,
-            List<UploadFileEntryDto> files
+            List<UploadFileEntryDto> files,
+            List<String> genres
     ) implements UploadMetadataDto {
         @Override
         public List<UploadFileEntryDto> getFiles() { return files; }
+
+        @Override
+        public List<String> genres() {
+            return genres;
+        }
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -58,7 +65,8 @@ public class FileUploadMetadata {
             String status,
             String posterPath,
             String backdropPath,
-            List<SeasonUploadMetadataDto> seasons
+            List<SeasonUploadMetadataDto> seasons,
+            List<String> genres
     ) implements UploadMetadataDto {
         @Override
         public List<UploadFileEntryDto> getFiles() {
@@ -66,6 +74,10 @@ public class FileUploadMetadata {
                     .flatMap(season -> season.episodes().stream())
                     .flatMap(episode -> episode.files().stream())
                     .toList();
+        }
+        @Override
+        public List<String> genres() {
+            return genres;
         }
 
 

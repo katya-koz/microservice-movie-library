@@ -1,16 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { MovieSummary } from "@/types/movie";
-import { ShowSummary } from "@/types/show";
+import { MediaSummary } from "@/types/media";
 
 interface PosterProps {
-  summary: MovieSummary | ShowSummary;
-  type: "MOVIE" | "SHOW";
+  summary: MediaSummary;
+  // type: "MOVIE" | "SHOW";
 }
 
-export default function Poster({ summary, type }: PosterProps) {
-  const reference = type == "MOVIE" ? "movies" : "shows";
+export default function Poster({ summary }: PosterProps) {
+  const reference = summary.mediaType == "MOVIE" ? "movies" : "shows";
 
   return (
     <Link
@@ -19,21 +18,35 @@ export default function Poster({ summary, type }: PosterProps) {
       className="group"
     >
       <div key={summary.id}>
-        <div className="aspect-[2/3] overflow-hidden rounded-lg bg-slate-800">
+        <div
+          className="
+              z-1
+              aspect-[2/3]
+              overflow-hidden
+              rounded-lg
+              outline-slate-800
+              bg-slate-800
+              transition-all
+              duration-200
+              ease-out
+              hover:scale-[1.03]
+              hover:outline
+              hover:outline-6
+              hover:outline-offset-2
+              hover:outline-slate-700
+              hover:shadow-xl
+            "
+        >
           {summary.posterPath && (
             <img
-              src={
-                process.env.NEXT_PUBLIC_MEDIA_URL_ROOT +
-                "/" +
-                summary.posterPath
-              }
+              src={summary.posterPath}
               alt={summary.title}
               className="h-full w-full object-cover"
             />
           )}
         </div>
 
-        <h2 className="mt-2 text-sm font-medium">{summary.title}</h2>
+        <h2 className="mt-2 text-lg text-center font-base ">{summary.title}</h2>
       </div>
     </Link>
   );

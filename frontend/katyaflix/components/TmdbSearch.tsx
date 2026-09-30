@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { searchTmdb, tmdbImage, TmdbMediaType } from "@/lib/tmdb";
-import { TmdbSearchResult } from "@/lib/types";
+import { TmdbSearchResult } from "@/types/tmdb";
 
 interface TmdbSearchProps {
   type: TmdbMediaType;
@@ -34,28 +34,6 @@ export default function TmdbSearch({
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
-
-  // useEffect(() => {
-  //   if (!query.trim()) {
-  //     setResults([]);
-  //     setError(null);
-  //     return;
-  //   }
-  //   setIsLoading(true);
-  //   setError(null);
-  //   const timeout = setTimeout(async () => {
-  //     try {
-  //       const res = await searchTmdb(type, query);
-  //       setResults(res);
-  //       setIsOpen(true);
-  //     } catch (err) {
-  //       setError(err instanceof Error ? err.message : 'Search failed');
-  //     } finally {
-  //       setIsLoading(false);
-  //     }
-  //   }, 350);
-  //   return () => clearTimeout(timeout);
-  // }, [query, type]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -153,7 +131,7 @@ export default function TmdbSearch({
       />
 
       {isOpen && query.trim().length > 0 && (
-        <div className="absolute z-20 mt-2 max-h-96 w-full overflow-y-auto rounded-lg border border-ink-line bg-ink-raised shadow-modal animate-rise-in">
+        <div className="absolute z-20 mt-2 max-h-96 w-full overflow-y-auto rounded-lg border border-ink-line bg-ink-raised shadow-modal animate-rise-in bg-slate-900">
           {isLoading && (
             <p className="p-4 font-mono text-xs text-paper-muted">Searching…</p>
           )}
@@ -178,7 +156,7 @@ export default function TmdbSearch({
                   onSelect(result);
                   setIsOpen(false);
                 }}
-                className="flex w-full items-center gap-3 border-b border-ink-line/60 p-3 text-left last:border-b-0 hover:bg-ink-elevated"
+                className="flex w-full items-center gap-3 border-b border-ink-line/60 p-3 text-left last:border-b-0 hover:bg-ink-elevated  hover:bg-slate-700"
               >
                 <div className="h-16 w-11 flex-shrink-0 overflow-hidden rounded bg-ink-elevated">
                   {tmdbImage(result.posterPath) ? (

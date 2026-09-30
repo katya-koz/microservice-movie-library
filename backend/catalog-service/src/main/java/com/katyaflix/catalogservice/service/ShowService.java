@@ -1,18 +1,15 @@
 package com.katyaflix.catalogservice.service;
 
+import com.katyaflix.catalogservice.dto.CatalogDtos;
 import com.katyaflix.catalogservice.dto.CatalogDtos.EpisodeDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.SeasonSummary;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowSummary;
-import com.katyaflix.catalogservice.entity.Episode;
-import com.katyaflix.catalogservice.entity.Season;
-import com.katyaflix.catalogservice.entity.Show;
-import com.katyaflix.catalogservice.repository.EpisodeRepository;
-import com.katyaflix.catalogservice.repository.MediaFileRepository;
-import com.katyaflix.catalogservice.repository.SeasonRepository;
-import com.katyaflix.catalogservice.repository.ShowRepository;
+import com.katyaflix.catalogservice.entity.*;
+import com.katyaflix.catalogservice.repository.*;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -26,13 +23,23 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ShowService {
 
+    @Value("${media.url}")
+    private String mediaUrlRoot;
     private final ShowRepository showRepository;
     private final SeasonRepository seasonRepository;
     private final EpisodeRepository episodeRepository;
     private final MediaFileRepository mediaFileRepository;
 
-    public Page<ShowSummary> getCatalogPage(Pageable pageable) {
-        return showRepository.findAllProjectedBy(pageable).map(p -> new ShowSummary(p.getId(), p.getTitle(), p.getPosterPath()));
+    public Page<ShowSummary> getCatalogPage(String title, Pageable pageable) {
+        Page<ShowRepository.ShowCatalogProjection> shows;
+
+        if (title == null || title.isBlank()) {
+            shows = showRepository.findAllProjectedBy(pageable);
+        } else {
+            shows = showRepository.findByTitleContainingIgnoreCase(title, pageable);
+        }
+
+        return shows.map(p ->  new CatalogDtos.ShowSummary( p.getId(), p.getTitle(), mediaUrlRoot + p.getPosterPath() ) );
     }
 
     public Optional<ShowDetail> getDetail(UUID showId) {
@@ -45,7 +52,9 @@ public class ShowService {
 
         return episodeRepository.findBySeasonIdOrderByEpisodeNumberAsc(season.getId()).stream().map(e -> toEpisodeDetail(e, seasonNumber)).toList();
     }
-
+    public List<CatalogDtos.ShowSummary> getSummaries(List<UUID> ids) {
+        return showRepository.findByIdIn(ids).stream().map(p -> new CatalogDtos.ShowSummary(p.getId(), p.getTitle(),mediaUrlRoot + p.getPosterPath())).toList();
+    }
     private ShowDetail toDetail(Show show) {
         List<SeasonSummary> seasons = seasonRepository
                 .findByShowIdOrderBySeasonNumberAsc(show.getId()).stream()
@@ -53,7 +62,7 @@ public class ShowService {
                         s.getId(),
                         s.getSeasonNumber(),
                         s.getTitle(),
-                        s.getPosterPath(),
+                        mediaUrlRoot +  s.getPosterPath(),
                         episodeRepository.countBySeasonId(s.getId())
                 ))
                 .toList();
@@ -65,9 +74,10 @@ public class ShowService {
                 show.getFirstAirDate(),
                 show.getCreatorNames(),
                 show.getStatus(),
-                show.getPosterPath(),
-                show.getBackdropPath(),
-                seasons
+                mediaUrlRoot + show.getPosterPath(),
+                mediaUrlRoot + show.getBackdropPath(),
+                seasons,
+                show.getGenres().stream().map(GenreToMedia::getGenre).map(Genre::getName).toList()
         );
     }
 
@@ -79,7 +89,7 @@ public class ShowService {
                 e.getTitle(),
                 e.getOverview(),
                 e.getRuntimeMinutes(),
-                e.getStillPath(),
+                mediaUrlRoot + e.getStillPath(),
                 e.getAirDate()
         );
     }

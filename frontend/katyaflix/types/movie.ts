@@ -18,6 +18,7 @@ export type MovieDetail = {
   creatorNames: string[];
   createdAt: string;
   updatedAt: string;
+  genres: string[];
 };
 
 export type MoviePage = {

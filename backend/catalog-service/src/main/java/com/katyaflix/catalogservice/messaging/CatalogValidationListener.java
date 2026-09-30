@@ -62,7 +62,8 @@ public class CatalogValidationListener {
                             metadata.runtimeMinutes(),
                             metadata.posterPath(),
                             metadata.backdropPath(),
-                            metadata.files()
+                            metadata.files(),
+                            metadata.genres()
                     ),
                     CatalogUpdateStatus.SUCCESS,
                     "Movie catalogued.",
@@ -176,7 +177,8 @@ public class CatalogValidationListener {
                         show.getStatus(),
                         show.getPosterPath(),
                         show.getBackdropPath(),
-                        seasonResults
+                        seasonResults,
+                        original.genres()
                 );
 
         return new CatalogShowUploadEvent(

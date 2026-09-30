@@ -3,6 +3,7 @@ package com.katyaflix.uploadservice.dto;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -103,7 +104,31 @@ public class CatalogEventDtos {
             Map<UUID, String> showPosterPaths,
             Map<UUID, String> showBackdropPaths,
             Map<UUID, String> moviePosterPaths,
-            Map<UUID, String> movieBackdropPaths
+            Map<UUID, String> movieBackdropPaths,
+            // Newly finalized subtitle sidecar files discovered on disk during
+            // finalization (see FileFinalizationService). Unlike the maps above,
+            // there can be many subtitles per movie/episode (one per language),
+            // and each one may need to be *created* rather than just updated in
+            // place, hence a flat list instead of a UUID->path map.
+            List<SubtitleFinalizedDto> subtitles
     ){}
+
+    /**
+     * A subtitle file that has been converted to WebVTT and moved into its
+     * final location in the media library. Exactly one of movieId/episodeId
+     * is set, mirroring the movieId/episodeId convention already used by
+     * MediaFileEnrichmentDto.
+     */
+    public record SubtitleFinalizedDto(
+            UUID movieId,
+            UUID episodeId,
+            String filePath,
+            String languageCode,
+            String label,
+            String format,
+            boolean forced,
+            boolean sdh,
+            String source
+    ) {}
 
 }

@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 import TmdbSearch from "@/components/TmdbSearch";
 import UploadDropzone from "@/components/UploadDropzone";
 import FileTree from "@/components/FileTree";
+import UploadJobStatusPanel from "@/components/UploadJobStatusPanel";
 
 import { DroppedFile } from "@/lib/files";
 import {
@@ -12,15 +14,17 @@ import {
   computeMovieStructure,
   computeShowStructure,
 } from "@/lib/uploadTree";
-import { buildMovieUpload, buildShowUpload } from "@/lib/uploadPayload";
-import { TmdbSearchResult } from "@/lib/types";
+import { buildMovieUpload, buildShowUpload } from "@/types/uploadPayload";
+import { TmdbSearchResult } from "@/types/tmdb";
 
 import { useTmdbDetails } from "@/hooks/useTmdbDetails";
 import { useUpload } from "@/hooks/useUpload";
+import { useUser } from "@/context/UserContext";
 
 type MediaType = "movie" | "show";
 
 export default function UploadPage() {
+  const user = useUser();
   const [mediaType, setMediaType] = useState<MediaType>("movie");
   const [selected, setSelected] = useState<TmdbSearchResult | null>(null);
 
@@ -162,6 +166,7 @@ export default function UploadPage() {
     try {
       await uploadMutation.mutateAsync({
         formData: built.formData,
+        userId: user.user?.id || "n/a",
         onProgress: setProgress,
       });
 
@@ -173,11 +178,22 @@ export default function UploadPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-12 ">
-      <p className="eyebrow">Add to library</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="eyebrow">Add to library</p>
 
-      <h1 className="mt-2 font-display text-4xl font-black uppercase tracking-tightest text-paper">
-        Upload
-      </h1>
+          <h1 className="mt-2 font-display text-4xl font-black uppercase tracking-tightest text-paper">
+            Upload
+          </h1>
+        </div>
+
+        <Link
+          href="/jobs"
+          className="font-mono text-xs uppercase tracking-widest text-paper-muted hover:text-paper"
+        >
+          My Upload Jobs →
+        </Link>
+      </div>
 
       <div className="mt-8 grid gap-8 lg:grid-cols-[340px_1fr]">
         {/* Sidebar: type, title match, details, upload control */}
@@ -283,7 +299,7 @@ export default function UploadPage() {
               type="button"
               disabled={!canUpload}
               onClick={handleUpload}
-              className="w-full rounded bg-marquee py-3 font-mono text-sm font-semibold uppercase tracking-widest text-ink transition-colors hover:bg-marquee-bright disabled:cursor-not-allowed disabled:bg-ink-line disabled:text-paper-faint"
+              className="w-full rounded bg-marquee py-3 font-mono text-sm font-semibold uppercase tracking-widest text-ink transition-colors hover:bg-marquee-bright disabled:cursor-not-allowed  disabled:bg-ink-line disabled:text-paper-faint"
             >
               {isUploading ? `Uploading… ${progress}%` : "Upload"}
             </button>
@@ -315,10 +331,16 @@ export default function UploadPage() {
               </p>
             )}
 
+            {/*
+              Files finish uploading well before encoding/finalizing does -
+              the job is now queued and processed in the background, so we
+              switch to a live websocket panel here instead of a static
+              "uploaded" message.
+            */}
             {uploadSuccess && (
-              <p className="mt-3 font-mono text-xs text-reel">
-                Uploaded — job {uploadSuccess.jobId}
-              </p>
+              <div className="mt-3">
+                <UploadJobStatusPanel jobId={uploadSuccess.jobId} />
+              </div>
             )}
           </div>
         </div>

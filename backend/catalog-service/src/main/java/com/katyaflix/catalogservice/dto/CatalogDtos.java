@@ -25,7 +25,8 @@ public class CatalogDtos {
             LocalDate releaseDate,
             String creatorNames,     // comma separated
             String posterPath,
-            String backdropPath
+            String backdropPath,
+            List<String> genres
     ) {}
 
     public record ShowDetail(
@@ -37,7 +38,8 @@ public class CatalogDtos {
             String status,
             String posterPath,
             String backdropPath,
-            List<SeasonSummary> seasons   // season picker —> not full episode lists
+            List<SeasonSummary> seasons,   // season picker —> not full episode lists
+            List<String> genres
     ) {}
 
     public record SeasonSummary(
@@ -77,7 +79,10 @@ public class CatalogDtos {
             String containerFormat,
             Integer durationSeconds,
             String resolution,
-            List<SubtitleTrack> subtitles
+            List<SubtitleTrack> subtitles,
+            UUID seasonId,
+            UUID showId
+
     ) {}
 
     public record NextEpisode(

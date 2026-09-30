@@ -27,7 +27,7 @@ public interface MovieRepository extends JpaRepository<Movie, UUID> {
 
     List<MovieCatalogProjection> findByIdIn(List<UUID> ids);
 
-
+    Page<MovieCatalogProjection> findByTitleContainingIgnoreCase(String title,Pageable pageable);
     @Modifying
     @Query("""
     UPDATE Movie e

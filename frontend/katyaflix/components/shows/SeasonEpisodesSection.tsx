@@ -4,13 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useShowSeasons } from "@/hooks/useShowSeasons";
 import { useSeasonEpisodes } from "@/hooks/useShowEpisodes";
-
-const MEDIA_URL_ROOT =
-  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
-
-function mediaUrl(path: string | null) {
-  return path ? `${MEDIA_URL_ROOT}${path}` : null;
-}
+import { useEpisodeWatchtimes } from "@/hooks/useWatchtime";
 
 function formatRuntime(minutes: number | null) {
   if (!minutes) return null;
@@ -28,12 +22,25 @@ function formatAirDate(dateString: string | null) {
   });
 }
 
+// Fraction watched, clamped to [0, 1]. Returns null when we don't have
+// enough info to compute it (no runtime, or nothing watched yet).
+function getProgressRatio(
+  watchtimeSeconds: number | undefined,
+  durationSeconds: number | undefined,
+) {
+  if (!watchtimeSeconds || !durationSeconds) return null;
+  if (durationSeconds <= 0) return null;
+  return Math.min(1, Math.max(0, watchtimeSeconds / durationSeconds));
+}
+
 type SeasonEpisodesSectionProps = {
   showId: string;
+  userId: string;
 };
 
 export default function SeasonEpisodesSection({
   showId,
+  userId,
 }: SeasonEpisodesSectionProps) {
   const router = useRouter();
 
@@ -64,6 +71,31 @@ export default function SeasonEpisodesSection({
     isLoading: episodesLoading,
     error: episodesError,
   } = useSeasonEpisodes(showId, selectedSeasonNumber);
+  const episodeIds = useMemo(
+    () => (episodes ? episodes.map((episode) => episode.id) : undefined),
+    [episodes],
+  );
+  const { data: watchtimes } = useEpisodeWatchtimes(userId, episodeIds);
+
+  const watchtimeByEpisodeId = useMemo(() => {
+    const map = new Map<string, number>();
+    watchtimes?.forEach((wt) => {
+      if (wt.mediaType === "EPISODE") {
+        map.set(wt.mediaId, wt.watchtimeSeconds);
+      }
+    });
+    return map;
+  }, [watchtimes]);
+
+  const durationByEpisodeId = useMemo(() => {
+    const map = new Map<string, number>();
+    watchtimes?.forEach((wt) => {
+      if (wt.mediaType === "EPISODE") {
+        map.set(wt.mediaId, wt.durationSeconds);
+      }
+    });
+    return map;
+  }, [watchtimes]);
 
   const handlePlayEpisode = (episodeId: string) => {
     router.push(`/watch/episode?episode_id=${episodeId}`);
@@ -82,7 +114,7 @@ export default function SeasonEpisodesSection({
   }
 
   return (
-    <div className="border-t border-slate-800 px-8 py-8">
+    <div className="border-t border-slate-800 px-8 py-8 h-full">
       <div className="flex flex-col gap-8 lg:flex-row">
         {/* Left: season selector + poster */}
         <div className="w-full shrink-0 lg:w-56">
@@ -105,7 +137,7 @@ export default function SeasonEpisodesSection({
           <div className="mt-4 aspect-[2/3] w-full overflow-hidden rounded-md bg-slate-800">
             {selectedSeason?.posterPath && (
               <img
-                src={mediaUrl(selectedSeason.posterPath) ?? undefined}
+                src={selectedSeason.posterPath ?? undefined}
                 alt={selectedSeason.title}
                 className="h-full w-full object-cover"
               />
@@ -146,6 +178,10 @@ export default function SeasonEpisodesSection({
                 const runtime = formatRuntime(episode.runtimeMinutes);
                 const airDate = formatAirDate(episode.airDate);
                 const meta = [runtime, airDate].filter(Boolean).join(" • ");
+                const progressRatio = getProgressRatio(
+                  watchtimeByEpisodeId.get(episode.id),
+                  durationByEpisodeId.get(episode.id),
+                );
 
                 return (
                   <button
@@ -156,7 +192,7 @@ export default function SeasonEpisodesSection({
                     <div className="relative aspect-video w-40 shrink-0 overflow-hidden rounded-md bg-slate-800">
                       {episode.stillPath && (
                         <img
-                          src={mediaUrl(episode.stillPath) ?? undefined}
+                          src={episode.stillPath ?? undefined}
                           alt={episode.title}
                           className="h-full w-full object-cover"
                         />
@@ -166,6 +202,15 @@ export default function SeasonEpisodesSection({
                           ▶
                         </span>
                       </div>
+
+                      {progressRatio !== null && (
+                        <div className="absolute inset-x-0 bottom-0 h-1 bg-black/50">
+                          <div
+                            className="h-full bg-green-600"
+                            style={{ width: `${progressRatio * 100}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     <div className="min-w-0 flex-1">

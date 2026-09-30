@@ -18,6 +18,7 @@ export type ShowDetail = {
   creatorNames: string[];
   createdAt: string;
   updatedAt: string;
+  genres: string[];
   seasons: SeasonSummary[]; // season picker only — not full episode lists
 };
 

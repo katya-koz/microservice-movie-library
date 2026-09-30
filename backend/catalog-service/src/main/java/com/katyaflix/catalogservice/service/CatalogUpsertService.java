@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * tmdb id is used as the source of truth before items get their uuids assigned
@@ -25,22 +26,31 @@ public class CatalogUpsertService {
     private final SeasonRepository seasonRepository;
     private final EpisodeRepository episodeRepository;
     private final MediaFileRepository mediaFileRepository;
+    private final SubtitleRepository subtitleRepository;
+    private final GenreService genreService;
 
     public CatalogUpsertService(
             MovieRepository movieRepository,
             ShowRepository showRepository,
             SeasonRepository seasonRepository,
-            EpisodeRepository episodeRepository, MediaFileRepository mediaFileRepository) {
+            EpisodeRepository episodeRepository,
+            MediaFileRepository mediaFileRepository,
+            SubtitleRepository subtitleRepository,
+            GenreService genreService) {
         this.movieRepository = movieRepository;
         this.showRepository = showRepository;
         this.seasonRepository = seasonRepository;
         this.episodeRepository = episodeRepository;
         this.mediaFileRepository = mediaFileRepository;
+        this.subtitleRepository = subtitleRepository;
+        this.genreService = genreService;
     }
 
     @Transactional
     public Movie upsertMovie(FileUploadMetadata.MovieUploadMetadataDto metadata) {
         validateMovie(metadata);
+
+//        System.out.println(metadata.toString());
 
 //        Movie movie = findOrCreate(movieRepository::findByTmdbId, Movie::new, event.tmdbId());
         Movie movie = findOrCreate( // hydrate uuid because it is needed for the paths
@@ -59,8 +69,10 @@ public class CatalogUpsertService {
 
 //        movie.setPosterPath("/assets/movies/" + movie.getId() + "/poster.jpg");
 //        movie.setBackdropPath("/assets/movies/" + movie.getId() + "/backdrop.jpg");
+        syncGenres(movie, metadata.genres());
+        saveWithRaceRetry(movieRepository, movie, movieRepository::findByTmdbId, metadata.tmdbId());
 
-        return saveWithRaceRetry(movieRepository, movie, movieRepository::findByTmdbId, metadata.tmdbId());
+        return movie;
     }
 
     @Transactional
@@ -112,6 +124,51 @@ public class CatalogUpsertService {
         mediaFileRepository.save(mediaFile);
 
         return mediaFile;
+    }
+
+    /**
+     * Creates or updates the Subtitle row for a subtitle file that
+     * upload-service has finalized (converted + moved into the library).
+     *
+     * Uses the same findOrCreate-by-parent-id pattern as
+     * upsertMovieMediaFile/upsertEpisodeMediaFile so this is safe to run
+     * regardless of whether the corresponding MediaFile enrichment event
+     * (sent on a different Kafka topic, with no ordering guarantee relative
+     * to this one) has already been processed - whichever event arrives
+     * first creates the MediaFile row, the other one just fills in more of
+     * it.
+     */
+    @Transactional
+    public Subtitle upsertSubtitle(CatalogEventDtos.SubtitleFinalizedDto dto) {
+
+        MediaFile mediaFile;
+
+        if (dto.movieId() != null) {
+            mediaFile = findOrCreate(mediaFileRepository::findByMovieId, MediaFile::new, dto.movieId());
+            mediaFile.setMovie(movieRepository.getReferenceById(dto.movieId()));
+        } else if (dto.episodeId() != null) {
+            mediaFile = findOrCreate(mediaFileRepository::findByEpisodeId, MediaFile::new, dto.episodeId());
+            mediaFile.setEpisode(episodeRepository.getReferenceById(dto.episodeId()));
+        } else {
+            throw new IllegalArgumentException("SubtitleFinalizedDto must set either movieId or episodeId");
+        }
+
+        mediaFileRepository.save(mediaFile);
+
+        Subtitle subtitle = subtitleRepository.findByFilePath(dto.filePath()).orElseGet(Subtitle::new);
+        subtitle.setMediaFile(mediaFile);
+        subtitle.setFilePath(dto.filePath());
+        subtitle.setLanguageCode(dto.languageCode());
+        subtitle.setLabel(dto.label());
+        subtitle.setForced(dto.forced());
+        subtitle.setSdh(dto.sdh());
+        subtitle.setSource(dto.source());
+
+        if (dto.format() != null && !dto.format().isBlank()) {
+            subtitle.setFormat(dto.format());
+        }
+
+        return subtitleRepository.save(subtitle);
     }
 
 
@@ -168,6 +225,12 @@ public class CatalogUpsertService {
             movieRepository.updateBackdropPath(key, path);
         }
 
+        if (catalogPathUpdateDto.subtitles() != null) {
+            for (CatalogEventDtos.SubtitleFinalizedDto subtitleDto : catalogPathUpdateDto.subtitles()) {
+                upsertSubtitle(subtitleDto);
+            }
+        }
+
     }
     @Transactional
     public Show upsertShow(FileUploadMetadata.ShowUploadMetadataDto metadata) {
@@ -186,8 +249,9 @@ public class CatalogUpsertService {
         show.setStatus(metadata.status());
         show.setTmdbPosterPath(metadata.posterPath());
         show.setTmdbBackdropPath(metadata.backdropPath());
-
+        syncGenres(show, metadata.genres());
         show = saveWithRaceRetry(showRepository, show, showRepository::findByTmdbId, metadata.tmdbId());
+
 
         // collect the actual persisted Season entities instead of relying on show.getSeasons()
         List<Season> seasons = new ArrayList<>(metadata.seasons().size());
@@ -323,8 +387,47 @@ public class CatalogUpsertService {
             return finder.apply(tmdbId).orElseThrow(() -> race);
         }
     }
+
+
+    private void syncGenres(Show show, List<String> genreNames) {
+        Set<String> desired = genreNames == null ? Set.of() : new HashSet<>(genreNames);
+
+        // drop associations that are no longer wanted
+        show.getGenres().removeIf(gtm -> !desired.contains(gtm.getGenre().getName()));
+
+        Set<String> alreadyLinked = show.getGenres().stream()
+                .map(gtm -> gtm.getGenre().getName())
+                .collect(Collectors.toSet());
+
+        for (String genreName : desired) {
+            if (alreadyLinked.contains(genreName)) continue; // untouched, no delete+insert race
+
+            Genre genre = genreService.findOrCreate(genreName);
+            GenreToMedia relationship = new GenreToMedia();
+            relationship.setGenre(genre);
+            relationship.setShow(show);
+            show.getGenres().add(relationship);
+        }
+    }
+
+    private void syncGenres(Movie movie, List<String> genreNames) {
+        Set<String> desired = genreNames == null ? Set.of() : new HashSet<>(genreNames);
+
+        // drop associations that are no longer wanted
+        movie.getGenres().removeIf(gtm -> !desired.contains(gtm.getGenre().getName()));
+
+        Set<String> alreadyLinked = movie.getGenres().stream()
+                .map(gtm -> gtm.getGenre().getName())
+                .collect(Collectors.toSet());
+
+        for (String genreName : desired) {
+            if (alreadyLinked.contains(genreName)) continue; // untouched, no delete+insert race
+
+            Genre genre = genreService.findOrCreate(genreName);
+            GenreToMedia relationship = new GenreToMedia();
+            relationship.setGenre(genre);
+            relationship.setMovie(movie);
+            movie.getGenres().add(relationship);
+        }
+    }
 }
-
-
-
-

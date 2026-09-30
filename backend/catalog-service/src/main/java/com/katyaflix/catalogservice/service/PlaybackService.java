@@ -73,14 +73,30 @@ public class PlaybackService {
                 .map(s -> new SubtitleTrack(s.getId(), s.getLanguageCode(), s.getLabel(), s.getFilePath(),s.isForced(), s.isSdh(), s.isDefault()))
                 .toList();
 
-        return new PlaybackInfo(
-                file.getId(),
-                file.getFilePath(),
-                file.getContainerFormat(),
-                file.getDurationSeconds(),
-                file.getResolution(),
-                tracks
-        );
+        if (file.getMovie() != null){
+            return new PlaybackInfo(
+                    file.getId(),
+                    file.getFilePath(),
+                    file.getContainerFormat(),
+                    file.getDurationSeconds(),
+                    file.getResolution(),
+                    tracks,
+                    null,
+                    null
+            );
+        }else{
+            return new PlaybackInfo(
+                    file.getId(),
+                    file.getFilePath(),
+                    file.getContainerFormat(),
+                    file.getDurationSeconds(),
+                    file.getResolution(),
+                    tracks,
+                    file.getEpisode().getSeason().getId(),
+                    file.getEpisode().getSeason().getShow().getId()
+            );
+        }
+
     }
 
     private NextEpisode toNextEpisode(Episode e, Integer seasonNumber) {

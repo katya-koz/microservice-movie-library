@@ -1,14 +1,6 @@
-import { TmdbDetails, TmdbSearchResult, TmdbSeasonEpisode } from "./types";
-
+import { TmdbDetails, TmdbSearchResult, TmdbSeasonEpisode } from "@/types/tmdb";
+import { UPLOAD_API_URL } from "./config";
 export type TmdbMediaType = "movie" | "tv";
-
-// All TMDB calls are proxied through the Spring Boot upload service, which
-// holds the TMDB API key server-side. This runs client-side (the upload
-// page's search-as-you-type), so it needs the full absolute URL, not a
-// same-origin relative path — see NEXT_PUBLIC_UPLOAD_API_URL in
-// .env.local.example.
-const UPLOAD_API_URL =
-  process.env.NEXT_PUBLIC_UPLOAD_API_URL ?? "http://localhost:8080";
 
 export async function searchTmdb(
   type: TmdbMediaType,
@@ -24,19 +16,6 @@ export async function searchTmdb(
   if (!res.ok) throw new Error(data.error || "TMDB search failed");
   return data.results as TmdbSearchResult[];
 }
-
-// export async function searchTmdb(
-//   type: TmdbMediaType,
-//   query: string,
-// ): Promise<TmdbSearchResult[]> {
-//   if (!query.trim()) return [];
-//   const res = await fetch(
-//     `${UPLOAD_API_URL}/api/tmdb/search?type=${type}&query=${encodeURIComponent(query)}`,
-//   );
-//   const data = await res.json();
-//   if (!res.ok) throw new Error(data.error || "TMDB search failed");
-//   return data.results as TmdbSearchResult[];
-// }
 
 export async function getTmdbDetails(
   type: TmdbMediaType,

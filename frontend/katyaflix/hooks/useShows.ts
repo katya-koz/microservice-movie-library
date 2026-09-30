@@ -1,20 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { getShows } from "@/api/shows";
-
-type UseShowsOptions = {
-  page?: number;
-  size?: number;
-  sort?: string;
-};
+import { PagedQueryOptions } from "@/types/media";
 
 export function useShows({
   page = 0,
   size = 24,
   sort = "title,asc",
-}: UseShowsOptions = {}) {
+  title,
+}: PagedQueryOptions = {}) {
   return useQuery({
-    queryKey: ["shows", page, size, sort],
-    queryFn: () => getShows(page, size, sort),
+    queryKey: ["shows", page, size, sort, title],
+    queryFn: () => getShows(page, size, sort, title),
     placeholderData: (previousData) => previousData,
   });
 }

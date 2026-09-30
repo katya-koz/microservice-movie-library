@@ -27,10 +27,11 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1 # we are just making a POC so no need for replications
       KAFKA_MIN_INSYNC_REPLICAS: 1 # see above
-    ports:
-      - "9092:9092"
+    # ports:
+    #   - "9092:9092"
     networks:
       - kafka-net
+    restart: unless-stopped
 
   ## GATEWAY
   gateway:
@@ -38,49 +39,50 @@ services:
       context: ./backend/gateway
       dockerfile: Dockerfile
     depends_on:
-#      - user-service
+      #      - user-service
       - catalog-service
       - file-upload-service
     environment:
       JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS}
       JWT_SECRET: ${JWT_SECRET}
       MONGO_PASSWORD: ${MONGO_PASSWORD}
-    ports:
-      - "8080:8080" # expose to host
+    # ports:
+    #   - "8080:8080" # expose to host
     networks:
       - backend-net
+    restart: unless-stopped
 
-#  # USER SERVICE
-#  user-service:
-#    build:
-#      context: ./backend/user-service
-#      dockerfile: Dockerfile
-#    depends_on:
-#      - user-db
-#    environment:
-#      #      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS}
-#      #      JWT_SECRET: ${JWT_SECRET}
-#      #      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
-#      #      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
-#      MONGO_PASSWORD: ${MONGO_PASSWORD}
-#    networks:
-#      - backend-net
-#  #      - kafka-net
-#
-#  user-db:
-#    image: postgres:15-alpine
-#    restart: always
-#    ports:
-#      - "5433:5432"
-#    environment:
-#      POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
-#      POSTGRES_USER: ${USER_DB_USER}
-#      POSTGRES_DB: userdb
-#    volumes:
-#      - user-db:/var/lib/postgresql/data
-#      - ./backend/init/init-userdb.sql:/docker-entrypoint-initdb.d/init-userdb.sql:ro
-#    networks:
-#      - backend-net
+  # USER SERVICE
+  user-service:
+    build:
+      context: ./backend/user-service
+      dockerfile: Dockerfile
+    depends_on:
+      - user-db
+    environment:
+      MEDIA_URL: ${MEDIA_URL}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
+      POSTGRES_USER: ${USER_DB_USER}
+      MEDIA_ROOT: /app/katyaflix_data
+    networks:
+      - backend-net
+      - kafka-net
+    restart: unless-stopped
+
+  user-db:
+    image: postgres:15-alpine
+    restart: always
+    # ports:
+    #   - "5433:5432"
+    environment:
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD}
+      POSTGRES_USER: ${USER_DB_USER}
+      POSTGRES_DB: userdb
+    volumes:
+      - user-db:/var/lib/postgresql/data
+      - ./backend/init/init-userdb.sql:/docker-entrypoint-initdb.d/init-userdb.sql:ro
+    networks:
+      - backend-net
 
   # CATALOG SERVICE
   catalog-service:
@@ -90,25 +92,27 @@ services:
     depends_on:
       - catalog-db
     environment:
+      MEDIA_URL: ${MEDIA_URL}
       POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD}
       POSTGRES_USER: ${CATALOG_DB_USER}
     networks:
       - backend-net
       - kafka-net
+    restart: unless-stopped
 
-  catalog-cache:
-    image: redis:latest
-    restart: always
-    ports:
-      - "6379:6379"
-    volumes:
-      - catalog-cache:/data/cache
+  # catalog-cache:
+  #   image: redis:latest
+  #   restart: always
+  #   # ports:
+  #   #   - "6379:6379"
+  #   volumes:
+  #     - catalog-cache:/data/cache
 
   catalog-db:
     image: postgres:15-alpine
     restart: always
-    ports:
-      - "5432:5432"
+    # ports:
+    #   - "5432:5432"
     environment:
       POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD}
       POSTGRES_USER: ${CATALOG_DB_USER}
@@ -142,21 +146,64 @@ services:
       - 1.1.1.1
 
   file-upload-db:
-    image: mongo
+    build:
+      context: ./backend/file-upload-service
+      dockerfile: Dockerfile_Mongo
     restart: always
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'mongosh --quiet --eval "db.adminCommand({ ping: 1 }).ok" | grep 1',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    command:
+      [
+        "mongod",
+        "--replSet",
+        "rs0",
+        "--keyFile",
+        "/etc/mongo-keyfile",
+        "--bind_ip_all",
+      ]
+
     environment:
       MONGO_INITDB_ROOT_PASSWORD: ${FILE_UPLOAD_DB_PASSWORD}
       MONGO_INITDB_ROOT_USERNAME: ${FILE_UPLOAD_DB_USER}
       MONGO_INITDB_DATABASE: fileuploaddb
 
-    ports:
-      - "27017:27017"
+    # ports:
+    #   - "27017:27017"
+
     volumes:
       - file-upload-db:/data/db
-      #      - /home/katyaflix2/data/file-upload-data:/var/lib/postgresql/data
-#      - ./backend/init/init-fileuploaddb.sql:/docker-entrypoint-initdb.d/init-fileuploaddb.sql:ro
+
     networks:
       - backend-net
+
+  mongo-init:
+    image: mongo:latest
+    depends_on:
+      file-upload-db:
+        condition: service_healthy
+
+    restart: "no"
+
+    networks:
+      - backend-net
+
+    command:
+      [
+        "mongosh",
+        "mongodb://${FILE_UPLOAD_DB_USER}:${FILE_UPLOAD_DB_PASSWORD}@file-upload-db:27017/admin?authSource=admin",
+        "--eval",
+        "rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'file-upload-db:27017'}]})",
+      ]
 
   media-server:
     image: nginx:alpine
@@ -164,20 +211,48 @@ services:
     restart: unless-stopped
     depends_on:
       - file-upload-service
-    ports:
-      - "8081:80"
+    # ports:
+    #   - "${MEDIA_PORT:-8081}:80"
     volumes:
       - "${MEDIA_ROOT}/library:/library:ro"
       - "./nginx/media.conf:/etc/nginx/conf.d/default.conf:ro"
+    networks:
+      - app-network
+
+  frontend-web:
+    build:
+      context: ./frontend/katyaflix
+      dockerfile: Dockerfile
+    container_name: frontend-web
+    depends_on:
+      - media-server
+    # ports:
+    #   - "${FRONTEND_PORT:-5000}:3000"
+    restart: unless-stopped
+    networks:
+      - app-network
+      - backend-net
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [gateway, media-server, frontend-web]
+    networks: [backend-net, app-network]
 
 networks:
   backend-net:
     driver: bridge
   kafka-net:
     driver: bridge
+  app-network:
+    driver: bridge
 
 volumes:
   user-db:
   catalog-db:
   file-upload-db:
-  catalog-cache:
+  # catalog-cache:

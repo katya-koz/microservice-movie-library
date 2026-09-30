@@ -94,4 +94,9 @@ public class Show implements Persistable<UUID> {
     @OneToMany(mappedBy = "show", fetch = FetchType.LAZY, cascade = CascadeType.ALL,  orphanRemoval = true )
     @Builder.Default
     private List<Season> seasons = new ArrayList<>();
+
+
+    @OneToMany(mappedBy = "show",fetch = FetchType.LAZY, cascade = CascadeType.ALL,orphanRemoval = true)
+    @Builder.Default
+    private List<GenreToMedia> genres = new ArrayList<>();
 }

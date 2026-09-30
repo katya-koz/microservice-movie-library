@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -98,7 +99,15 @@ public class FileEncodingService {
     }
 
 
-
+    /**
+     * Encodes video files. IMPORTANT: this must only ever be called with
+     * actual video files. Subtitle files have neither a video nor an audio
+     * stream, so running them through this pipeline (which always -maps
+     * 0:v/0:a) fails immediately - see {@link #encodeSubtitle(Path)} for the
+     * separate subtitle path. Callers are expected to split files by
+     * FileUploadMetadata.FileType before reaching this method (see
+     * UploadService#saveMovieFiles / #saveShowFiles).
+     */
     public List<EncodedMediaFile> encodeAll(Map<String, Path> files) throws IOException {
 
         List<EncodedMediaFile> encodedFiles =  new ArrayList<>();
@@ -232,6 +241,72 @@ public class FileEncodingService {
         }
     }
 
+    /**
+     * Converts a batch of subtitle files to WebVTT in place (same directory,
+     * extension swapped to .vtt). Unlike {@link #encodeAll(Map)}, there's no
+     * per-movie/episode correlation done here - callers only need the
+     * resulting file list for logging/telemetry, since FileFinalizationService
+     * re-discovers the converted files straight off disk when it moves them
+     * into the final library location.
+     */
+    public List<Path> encodeSubtitles(Map<String, Path> subtitleFiles) throws IOException {
+        List<Path> results = new ArrayList<>();
+
+        for (Path input : subtitleFiles.values()) {
+            results.add(encodeSubtitle(input));
+        }
+
+        return results;
+    }
+
+    public Path encodeSubtitle(Path input) throws IOException {
+
+        if (input == null) {
+            throw new IllegalArgumentException("Input path cannot be null");
+        }
+
+        if (!Files.exists(input)) {
+            throw new IOException("Subtitle file does not exist: " + input);
+        }
+
+        if (!Files.isRegularFile(input)) {
+            throw new IOException("Subtitle path is not a regular file: " + input);
+        }
+
+        String filename = input.getFileName().toString();
+        String extension = extension(filename);
+
+        // already the format we serve to the browser - nothing to do
+        if (".vtt".equals(extension)) {
+            return input;
+        }
+
+        Path output = input.resolveSibling(removeExtension(filename) + ".vtt");
+
+        log.info("Converting subtitle: {} -> {}", input, output);
+
+        // Deliberately no -map/-c:v/-c:a here: a subtitle file has neither a
+        // video nor an audio stream, so treating it like a video input (as
+        // the video encode() pipeline above does) makes ffmpeg fail with
+        // "Stream map '0:v' matches no streams." This is what was previously
+        // crashing uploads that included a .srt alongside the video file.
+        runProcess(List.of(
+                FFMPEG,
+                "-y",
+                "-loglevel", "warning",
+                "-i", input.toString(),
+                output.toString()
+        ));
+
+        if (!Files.exists(output)) {
+            throw new IOException("FFmpeg completed but subtitle output does not exist: " + output);
+        }
+
+        Files.deleteIfExists(input);
+
+        return output;
+    }
+
 
     private String extractTmdbId(Path input) throws IOException {
         // extract the tmdb id from path
@@ -359,7 +434,7 @@ public class FileEncodingService {
     private EncodingPlan determinePlan(MediaProbeResult probe) {
 
         boolean supportedVideo =  SUPPORTED_VIDEO_CODEC_H264.equalsIgnoreCase(probe.videoCodec())
-                        || SUPPORTED_VIDEO_CODEC_HEVC.equalsIgnoreCase( probe.videoCodec());
+                || SUPPORTED_VIDEO_CODEC_HEVC.equalsIgnoreCase( probe.videoCodec());
 
         boolean supportedAudio =  SUPPORTED_AUDIO_CODEC_AAC.equalsIgnoreCase(probe.audioCodec());
 
@@ -395,35 +470,20 @@ public class FileEncodingService {
         return input.resolveSibling(baseName + "-temp.mp4");
     }
 
-    private EncodedMediaFile replaceOriginal(Path original,Path temporary) throws IOException {
-        try {
-            if (!Files.exists(temporary)) {
-                throw new IOException( "FFmpeg completed but output file does not exist: "+ temporary);
-            }
-
-            Files.delete(original);
-            Path finalPath = original.resolveSibling(removeExtension(original.getFileName().toString()) + ".mp4" );
-            Files.move(temporary, finalPath);
-
-            log.info("Encoding successful: {} -> {}",original, finalPath);
-
-            /*
-             * probe actual result instead of assuming setting were applied correctly
-             */
-            return EncodedMediaFile.from(probe(finalPath), extractTmdbId(finalPath));
-
-        } catch (Exception e) {
-            Files.deleteIfExists(temporary);
-            throw e;
-        }
-    }
-
     private String removeExtension(String filename) {
         int index = filename.lastIndexOf('.');
 
         return index > 0
                 ? filename.substring(0, index)
                 : filename;
+    }
+
+    private String extension(String filename) {
+        int index = filename.lastIndexOf('.');
+
+        return index >= 0
+                ? filename.substring(index).toLowerCase(Locale.ROOT)
+                : "";
     }
 
     private String normalizeContainer(String container) {

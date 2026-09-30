@@ -20,6 +20,7 @@ import java.util.UUID;
 public class UploadJob {
 
     public enum UploadStatus {
+        QUEUED_FOR_ENCODING,
         SAVING_ASSETS,
         PENDING,
         UPLOADING,
@@ -43,8 +44,23 @@ public class UploadJob {
     @Field("progress_percent")
     private int progressPercent = 0;
 
+    @Field("current_step")
+    private String currentStep;
+
+    @Field("encoded_file_count")
+    private int encodedFileCount;
+
+    @Field("video_file_paths")
+    private Map<String, String> videoFilePaths;
+
+    @Field("subtitle_file_paths")
+    private Map<String, String> subtitleFilePaths;
+
     @Field("tmdb_id")
     private long tmdbId;
+
+    @Field("user_id")
+    private UUID userId;
 
     @Field("title")
     private String title;

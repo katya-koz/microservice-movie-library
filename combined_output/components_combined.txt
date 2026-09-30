@@ -1,0 +1,3200 @@
+
+================================================================================
+FILE: CustomVideoPlayer.tsx
+================================================================================
+
+"use client";
+
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
+import {
+  ArrowBarRight,
+  ArrowReturnLeft,
+  BadgeCc,
+  Fullscreen,
+  FullscreenExit,
+  Pause,
+  Play,
+  VolumeMute,
+  VolumeUp,
+} from "react-bootstrap-icons";
+
+export interface SubtitleTrack {
+  id: string;
+  filePath: string;
+  languageCode: string;
+  label: string;
+  isDefault?: boolean;
+}
+
+export interface NextEpisodeInfo {
+  episodeId: string;
+  title: string;
+  episodeNumber: number;
+  seasonNumber?: number;
+  stillPath?: string | null;
+}
+
+export interface CustomVideoPlayerProps {
+  src: string;
+  mediaUrlRoot: string;
+  mediaType: "MOVIE" | "EPISODE";
+  /** Movie title, or show name when mediaType === "EPISODE". */
+  title: string;
+  /** Episode title, only used when mediaType === "EPISODE". */
+  episodeTitle?: string;
+  episodeNumber?: number;
+  seasonNumber?: number;
+  overview?: string;
+  subtitles?: SubtitleTrack[];
+  nextEpisode?: NextEpisodeInfo | null;
+
+  resumeSeconds?: number;
+  resumeMinSeconds?: number;
+  autoPlay?: boolean;
+  onClose: () => void;
+  onPlayNext?: () => void;
+  onEnded?: () => void;
+  onPlayingChange?: (isPlaying: boolean) => void;
+}
+
+const CONTROLS_HIDE_DELAY_MS = 3000;
+const IDLE_INFO_DELAY_MS = 10000;
+
+// ---- persisted, global (not per-media) playback preferences ----
+// Deliberately NOT keyed by media id: these are "how I like to watch
+// anything", so they should carry over the first time a new title loads.
+const VOLUME_STORAGE_KEY = "player:volume";
+const MUTED_STORAGE_KEY = "player:muted";
+const SUBTITLES_STORAGE_KEY = "player:subtitlesOn";
+
+function loadStoredVolume(): number {
+  if (typeof window === "undefined") return 1;
+  try {
+    const raw = window.localStorage.getItem(VOLUME_STORAGE_KEY);
+    const parsed = raw !== null ? Number(raw) : NaN;
+    return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function loadStoredMuted(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(MUTED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+// Returns null when the user has never set a subtitle preference before,
+// so callers can fall back to the per-track `isDefault` flag.
+function loadStoredSubtitlesOn(): boolean | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(SUBTITLES_STORAGE_KEY);
+    return raw === null ? null : raw === "true";
+  } catch {
+    return null;
+  }
+}
+
+function persist(key: string, value: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Storage can be unavailable (private mode, quota, etc.) — playback
+    // still works, the preference just won't be remembered.
+  }
+}
+
+function formatTime(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = Math.floor(totalSeconds % 60);
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+export const CustomVideoPlayer = forwardRef<
+  HTMLVideoElement,
+  CustomVideoPlayerProps
+>(function CustomVideoPlayer(
+  {
+    src,
+    mediaUrlRoot,
+    mediaType,
+    title,
+    episodeTitle,
+    episodeNumber,
+    seasonNumber,
+    overview,
+    subtitles,
+    resumeSeconds,
+    resumeMinSeconds = 10,
+    autoPlay = true,
+    nextEpisode,
+    onClose,
+    onPlayNext,
+    onEnded,
+    onPlayingChange,
+  },
+  forwardedRef,
+) {
+  const internalVideoRef = useRef<HTMLVideoElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  useImperativeHandle(
+    forwardedRef,
+    () => internalVideoRef.current as HTMLVideoElement,
+  );
+
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  // Initialized from localStorage so a brand-new title still opens at the
+  // volume/mute level the user last set, instead of defaulting to 100%.
+  const [volume, setVolume] = useState(() => loadStoredVolume());
+  const [isMuted, setIsMuted] = useState(() => loadStoredMuted());
+  const [subtitlesOn, setSubtitlesOn] = useState(() => {
+    const stored = loadStoredSubtitlesOn();
+    if (stored !== null) return stored;
+    return subtitles?.some((t) => t.isDefault) ?? false;
+  });
+  const [showControls, setShowControls] = useState(true);
+  const [showIdleInfo, setShowIdleInfo] = useState(false);
+  const [showNextPreview, setShowNextPreview] = useState(false);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+
+  const isPlayingRef = useRef(false);
+  // Guards the resume seek so it only ever fires once per `src`. Reset
+  // whenever `src` changes (see the "reset per-title state" effect below).
+  const hasSeekedRef = useRef(false);
+  const hideControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleInfoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasSubtitles = !!subtitles && subtitles.length > 0;
+  const hasNextEpisode = mediaType === "EPISODE" && !!nextEpisode;
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // ---- auto-open fullscreen, exit on unmount ----
+  useEffect(() => {
+    const el = containerRef.current as
+      | (HTMLDivElement & {
+          webkitRequestFullscreen?: () => Promise<void>;
+        })
+      | null;
+    const request =
+      el?.requestFullscreen?.bind(el) ?? el?.webkitRequestFullscreen?.bind(el);
+    request?.().catch(() => {
+      // Fullscreen can be blocked (e.g. not triggered by a direct user
+      // gesture on some browsers) — playback still works, just windowed.
+    });
+    return () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await container.requestFullscreen();
+      }
+    } catch {
+      // Fullscreen may be unavailable or blocked by the browser.
+    }
+  };
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === containerRef.current);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  // ---- reset per-title state whenever the source changes (e.g. after
+  // navigating to the next episode, since this component instance is reused).
+  // Subtitles fall back to the stored global preference first, and only
+  // use the per-track `isDefault` flag if the user has never set one. ----
+  useEffect(() => {
+    hasSeekedRef.current = false;
+    setCurrentTime(0);
+    setDuration(0);
+    setSubtitlesOn(() => {
+      const stored = loadStoredSubtitlesOn();
+      if (stored !== null) return stored;
+      return subtitles?.some((t) => t.isDefault) ?? false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  // ---- apply the stored volume/mute preference to the actual media
+  // element. Needed because <video> has no volume attribute — the
+  // element itself always boots at volume 1 / unmuted regardless of
+  // React state, so this has to be set imperatively once the element
+  // (re)acquires a source. ----
+  useEffect(() => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+    video.volume = volume;
+    video.muted = isMuted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  // ---- wire up native video events ----
+  useEffect(() => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+
+    const handlePlay = () => {
+      setIsPlaying(true);
+      onPlayingChange?.(true);
+    };
+    const handlePause = () => {
+      setIsPlaying(false);
+      onPlayingChange?.(false);
+    };
+    const handleTimeUpdate = () => setCurrentTime(video.currentTime);
+    // NOTE: this only records that metadata (duration) is now known. It
+    // deliberately does NOT perform the resume seek — see the dedicated
+    // effect below for why: resumeSeconds can still be `undefined` at this
+    // point (watchtime fetch not resolved yet), and this handler's closure
+    // would otherwise freeze whatever resumeSeconds was at effect-bind
+    // time, since this effect only depends on `[src]`.
+    const handleLoadedMetadata = () => {
+      setDuration(video.duration || 0);
+    };
+    const handleEnded = () => {
+      setIsPlaying(false);
+      onEnded?.();
+    };
+    // Fires on any volume/mute change, whether from our own controls or
+    // the browser's native UI — so this is also the single place that
+    // persists the user's global volume/mute preference.
+    const handleVolumeChange = () => {
+      setVolume(video.volume);
+      setIsMuted(video.muted);
+      persist(VOLUME_STORAGE_KEY, String(video.volume));
+      persist(MUTED_STORAGE_KEY, String(video.muted));
+    };
+
+    video.addEventListener("play", handlePlay);
+    video.addEventListener("pause", handlePause);
+    video.addEventListener("timeupdate", handleTimeUpdate);
+    video.addEventListener("loadedmetadata", handleLoadedMetadata);
+    video.addEventListener("ended", handleEnded);
+    video.addEventListener("volumechange", handleVolumeChange);
+
+    return () => {
+      video.removeEventListener("play", handlePlay);
+      video.removeEventListener("pause", handlePause);
+      video.removeEventListener("timeupdate", handleTimeUpdate);
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      video.removeEventListener("ended", handleEnded);
+      video.removeEventListener("volumechange", handleVolumeChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  // ---- perform the resume seek exactly once, whenever BOTH pieces of
+  // information we need are actually ready: the video's duration (from
+  // loadedmetadata) and a real resumeSeconds value (not the "haven't
+  // fetched it yet" placeholder). Whichever arrives second is what
+  // triggers the seek — so this is correct regardless of whether the
+  // watchtime fetch or the video's metadata load wins the race. ----
+  useEffect(() => {
+    if (hasSeekedRef.current) return;
+    if (resumeSeconds === undefined) return; // watchtime not resolved yet
+    if (!duration) return; // metadata not loaded yet
+    const video = internalVideoRef.current;
+    if (!video) return;
+
+    hasSeekedRef.current = true;
+    const nearEnd = resumeSeconds >= duration - resumeMinSeconds;
+    if (resumeSeconds > resumeMinSeconds && !nearEnd) {
+      video.currentTime = resumeSeconds;
+    }
+  }, [resumeSeconds, duration, resumeMinSeconds]);
+
+  // ---- keep isPlayingRef current for use inside timeout closures ----
+  useEffect(() => {
+    isPlayingRef.current = isPlaying;
+  }, [isPlaying]);
+
+  // ---- toggle subtitle tracks on/off, and persist the preference
+  // globally so it applies to the next title too ----
+  useEffect(() => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+    const tracks = video.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      if (!subtitlesOn) {
+        tracks[i].mode = "hidden";
+        continue;
+      }
+      const meta = subtitles?.[i];
+      const anyDefault = subtitles?.some((t) => t.isDefault) ?? false;
+      tracks[i].mode =
+        meta?.isDefault || (!anyDefault && i === 0) ? "showing" : "hidden";
+    }
+  }, [subtitlesOn, subtitles]);
+
+  useEffect(() => {
+    persist(SUBTITLES_STORAGE_KEY, String(subtitlesOn));
+  }, [subtitlesOn]);
+
+  // ---- controls visibility / idle-info timers ----
+  const clearHideTimer = () => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+  };
+  const clearIdleInfoTimer = () => {
+    if (idleInfoTimer.current) clearTimeout(idleInfoTimer.current);
+  };
+  const scheduleHideControls = () => {
+    clearHideTimer();
+    hideControlsTimer.current = setTimeout(() => {
+      if (isPlayingRef.current) setShowControls(false);
+    }, CONTROLS_HIDE_DELAY_MS);
+  };
+  const scheduleIdleInfo = () => {
+    clearIdleInfoTimer();
+    idleInfoTimer.current = setTimeout(() => {
+      if (!isPlayingRef.current) setShowIdleInfo(true);
+    }, IDLE_INFO_DELAY_MS);
+  };
+
+  // Whenever play state flips: reset to "controls visible, no idle info",
+  // then arm whichever timer is relevant.
+  useEffect(() => {
+    setShowIdleInfo(false);
+    clearIdleInfoTimer();
+    clearHideTimer();
+    setShowControls(true);
+    if (isPlaying) {
+      scheduleHideControls();
+    } else {
+      scheduleIdleInfo();
+    }
+    return () => {
+      clearHideTimer();
+      clearIdleInfoTimer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
+
+  const registerActivity = () => {
+    setShowControls(true);
+    setShowIdleInfo(false);
+    clearIdleInfoTimer();
+    if (isPlayingRef.current) {
+      scheduleHideControls();
+    } else {
+      scheduleIdleInfo();
+    }
+  };
+
+  // ---- actions ----
+  const togglePlay = () => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+  };
+
+  const toggleMute = () => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+  };
+
+  const handleVolumeScrub = (fraction: number) => {
+    const video = internalVideoRef.current;
+    if (!video) return;
+    video.volume = fraction;
+    video.muted = fraction === 0;
+  };
+
+  const handleSeekScrub = (fraction: number) => {
+    const video = internalVideoRef.current;
+    if (!video || !duration) return;
+    const time = fraction * duration;
+    video.currentTime = time;
+    setCurrentTime(time);
+  };
+
+  const exitFullscreenIfActive = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+  };
+
+  const handleClose = () => {
+    exitFullscreenIfActive();
+    onClose();
+  };
+
+  const handleNextClick = () => {
+    exitFullscreenIfActive();
+    onPlayNext?.();
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      onMouseMove={registerActivity}
+      onTouchStart={registerActivity}
+      onKeyDown={(e) => {
+        registerActivity();
+        if (e.code === "Space") {
+          e.preventDefault();
+          togglePlay();
+        } else if (e.key === "m") {
+          toggleMute();
+        }
+      }}
+      className="relative h-full w-full overflow-hidden bg-black outline-none"
+    >
+      <video
+        ref={internalVideoRef}
+        src={src}
+        autoPlay={autoPlay}
+        playsInline
+        onClick={togglePlay}
+        crossOrigin="anonymous"
+        className="h-full w-full cursor-pointer"
+      >
+        {subtitles?.map((track) => (
+          <track
+            key={track.id}
+            kind="subtitles"
+            src={`${mediaUrlRoot}${track.filePath}`}
+            srcLang={track.languageCode}
+            label={track.label}
+            default={track.isDefault}
+          />
+        ))}
+      </video>
+
+      {/* Top gradient + close button */}
+      <div
+        className={`pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 ${
+          showControls ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <button
+        onClick={handleClose}
+        aria-label="Close player"
+        className={`text-4xl absolute left-4 top-4 z-20 flex h-10 w-10 items-center justify-center rounded-full text-white transition-opacity duration-300 hover:bg-white/10 md:left-6 md:top-6 ${
+          showControls ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <ArrowReturnLeft />
+      </button>
+
+      {/* Idle metadata overlay — paused + 10s of no activity */}
+      <div
+        className={`pointer-events-none absolute inset-x-0 bottom-28 z-10 px-6 transition-all duration-500 md:bottom-32 md:px-16 ${
+          showIdleInfo ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
+        }`}
+      >
+        <div className="max-w-xl">
+          {mediaType === "EPISODE" ? (
+            <>
+              <p className="text-sm font-medium text-slate-300">{title}</p>
+              <h2 className="mt-1 text-2xl font-semibold text-white">
+                {seasonNumber != null && episodeNumber != null
+                  ? `S${seasonNumber} E${episodeNumber} — `
+                  : ""}
+                {episodeTitle}
+              </h2>
+            </>
+          ) : (
+            <h2 className="text-2xl font-semibold text-white">{title}</h2>
+          )}
+          {overview && (
+            <p className="mt-2 line-clamp-3 text-sm leading-relaxed text-slate-300">
+              {overview}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom gradient + controls */}
+      <div
+        className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 pb-5 pt-20 transition-opacity duration-300 md:px-10 ${
+          showControls ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        {/* Seek bar */}
+        <div className="flex items-center gap-3">
+          <span className="w-12 shrink-0 text-right text-xs tabular-nums text-slate-300">
+            {formatTime(currentTime)}
+          </span>
+          <Scrubber
+            value={duration ? currentTime / duration : 0}
+            onScrub={handleSeekScrub}
+            ariaLabel="Seek"
+          />
+          <span className="w-12 shrink-0 text-xs tabular-nums text-slate-300">
+            {formatTime(duration)}
+          </span>
+        </div>
+
+        {/* Buttons row */}
+        <div className="mt-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={togglePlay}
+              aria-label={isPlaying ? "Pause" : "Play"}
+              className="text-white hover:text-slate-300 text-4xl"
+            >
+              {isPlaying ? <Pause /> : <Play />}
+            </button>
+
+            <div
+              className="flex items-center gap-2"
+              onMouseEnter={() => setShowVolumeSlider(true)}
+              onMouseLeave={() => setShowVolumeSlider(false)}
+            >
+              <button
+                onClick={toggleMute}
+                aria-label={isMuted || volume === 0 ? "Unmute" : "Mute"}
+                className="text-white hover:text-slate-300 text-4xl"
+              >
+                {isMuted || volume === 0 ? <VolumeMute /> : <VolumeUp />}
+              </button>
+              <div
+                className={`overflow-hidden transition-all duration-200 ${
+                  showVolumeSlider ? "w-20 opacity-100" : "w-0 opacity-0"
+                }`}
+              >
+                <Scrubber
+                  value={isMuted ? 0 : volume}
+                  onScrub={handleVolumeScrub}
+                  ariaLabel="Volume"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {hasSubtitles && (
+              <button
+                onClick={() => setSubtitlesOn((v) => !v)}
+                aria-label={
+                  subtitlesOn ? "Turn off subtitles" : "Turn on subtitles"
+                }
+                aria-pressed={subtitlesOn}
+                className={
+                  subtitlesOn
+                    ? "text-white text-4xl"
+                    : "text-slate-400 hover:text-slate-200 text-4xl"
+                }
+              >
+                <BadgeCc
+                  className={`${subtitlesOn ? "font-white" : "font-slate-300"} text-4xl`}
+                />
+              </button>
+            )}
+
+            {hasNextEpisode && (
+              <div
+                className="relative"
+                onMouseEnter={() => setShowNextPreview(true)}
+                onMouseLeave={() => setShowNextPreview(false)}
+              >
+                <div
+                  className={`absolute bottom-full right-0 mb-3 w-64 origin-bottom-right overflow-hidden rounded-md bg-slate-900 shadow-xl ring-1 ring-white/10 transition-all duration-150 ${
+                    showNextPreview
+                      ? "scale-100 opacity-100"
+                      : "pointer-events-none scale-95 opacity-0"
+                  }`}
+                >
+                  <div className="aspect-video w-full bg-slate-800">
+                    {nextEpisode?.stillPath && (
+                      <img
+                        src={`${mediaUrlRoot}${nextEpisode.stillPath}`}
+                        alt={nextEpisode.title}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="p-3">
+                    <p className="text-xs text-slate-400">
+                      {nextEpisode?.seasonNumber != null
+                        ? `S${nextEpisode.seasonNumber} E${nextEpisode.episodeNumber}`
+                        : `Episode ${nextEpisode?.episodeNumber}`}
+                    </p>
+                    <p className="truncate text-sm font-medium text-white">
+                      {nextEpisode?.title}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleNextClick}
+                  aria-label="Play next episode"
+                  className="text-white hover:text-slate-300 text-4xl"
+                >
+                  <ArrowBarRight />
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={toggleFullscreen}
+              aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              className="text-white hover:text-slate-300 text-4xl"
+            >
+              {isFullscreen ? <FullscreenExit /> : <Fullscreen />}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* Custom scrubber — shared by the seek bar and volume slider. Plain   */
+/* divs + pointer events instead of <input type="range"> so it can be  */
+/* styled precisely instead of fighting browser default thumb/track    */
+/* styles.                                                              */
+/* ------------------------------------------------------------------ */
+
+function Scrubber({
+  value,
+  onScrub,
+  ariaLabel,
+}: {
+  value: number;
+  onScrub: (fraction: number) => void;
+  ariaLabel: string;
+}) {
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const clamp = (n: number) => Math.min(1, Math.max(0, n));
+
+  const fractionFromClientX = (clientX: number) => {
+    const el = trackRef.current;
+    if (!el) return value;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return value;
+    return clamp((clientX - rect.left) / rect.width);
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handleMove = (e: PointerEvent) =>
+      onScrub(fractionFromClientX(e.clientX));
+    const handleUp = () => setDragging(false);
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging]);
+
+  return (
+    <div
+      ref={trackRef}
+      role="slider"
+      aria-label={ariaLabel}
+      aria-valuemin={0}
+      aria-valuemax={1}
+      aria-valuenow={Number(value.toFixed(2))}
+      tabIndex={0}
+      onPointerDown={(e) => {
+        setDragging(true);
+        onScrub(fractionFromClientX(e.clientX));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft") onScrub(clamp(value - 0.05));
+        if (e.key === "ArrowRight") onScrub(clamp(value + 0.05));
+      }}
+      className="group/scrubber relative flex h-4 flex-1 cursor-pointer items-center"
+    >
+      <div className="h-1 w-full overflow-hidden rounded-full bg-white/25">
+        <div
+          className="h-full rounded-full bg-white"
+          style={{ width: `${value * 100}%` }}
+        />
+      </div>
+      <div
+        className={`absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow transition-opacity ${
+          dragging
+            ? "opacity-100"
+            : "opacity-0 group-hover/scrubber:opacity-100"
+        }`}
+        style={{ left: `${value * 100}%` }}
+      />
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: FileDropzone.tsx
+================================================================================
+
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { collectFromDataTransfer, collectFromFileList, DroppedFile } from '@/lib/files';
+
+interface FileDropzoneProps {
+  onFiles: (files: DroppedFile[]) => void;
+  accept?: string;
+  multiple?: boolean;
+  /** Enables folder selection (native directory picker + recursive drop reading). */
+  directory?: boolean;
+  label: string;
+  hint?: string;
+  compact?: boolean;
+}
+
+export default function FileDropzone({
+  onFiles,
+  accept,
+  multiple,
+  directory,
+  label,
+  hint,
+  compact,
+}: FileDropzoneProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [isReading, setIsReading] = useState(false);
+  const dragCounter = useRef(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!inputRef.current) return;
+    if (directory) {
+      inputRef.current.setAttribute('webkitdirectory', '');
+      inputRef.current.setAttribute('directory', '');
+    } else {
+      inputRef.current.removeAttribute('webkitdirectory');
+      inputRef.current.removeAttribute('directory');
+    }
+  }, [directory]);
+
+  async function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    setIsReading(true);
+    try {
+      const files = await collectFromDataTransfer(e.dataTransfer);
+      onFiles(files);
+    } finally {
+      setIsReading(false);
+    }
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) onFiles(collectFromFileList(e.target.files));
+    e.target.value = '';
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => inputRef.current?.click()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          inputRef.current?.click();
+        }
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragCounter.current += 1;
+        setIsDragging(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) setIsDragging(false);
+      }}
+      onDrop={handleDrop}
+      className={`group cursor-pointer rounded-lg border-2 border-dashed text-center transition-colors ${
+        compact ? 'p-5' : 'p-10'
+      } ${
+        isDragging
+          ? 'border-marquee bg-marquee/[0.06]'
+          : 'border-ink-line bg-ink-raised/40 hover:border-paper-faint hover:bg-ink-raised'
+      }`}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        className="hidden"
+        accept={accept}
+        multiple={multiple}
+        onChange={handleInputChange}
+      />
+      <ReelIcon className={`mx-auto ${compact ? 'h-6 w-6' : 'h-9 w-9'} text-paper-faint group-hover:text-marquee`} />
+      <p className={`mt-3 font-medium text-paper ${compact ? 'text-sm' : 'text-base'}`}>
+        {isReading ? 'Reading files…' : label}
+      </p>
+      {hint && <p className="mt-1 font-mono text-xs text-paper-muted">{hint}</p>}
+    </div>
+  );
+}
+
+function ReelIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
+      <circle cx="12" cy="6.2" r="1.6" fill="currentColor" />
+      <circle cx="17.2" cy="9.4" r="1.6" fill="currentColor" />
+      <circle cx="15.2" cy="15.6" r="1.6" fill="currentColor" />
+      <circle cx="8.8" cy="15.6" r="1.6" fill="currentColor" />
+      <circle cx="6.8" cy="9.4" r="1.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+
+
+================================================================================
+FILE: FileTree.tsx
+================================================================================
+
+"use client";
+
+import { TreeFolderNode, TreeNode } from "@/lib/uploadTree";
+import { BadgeCc, FileEarmark, Film, Folder } from "react-bootstrap-icons";
+
+interface FileTreeProps {
+  node: TreeFolderNode;
+  canonicalNameById?: Map<string, string>;
+  seasonLabelByFolderId?: Map<string, string>;
+  ignoredIds?: Set<string>;
+  depth?: number;
+}
+
+export default function FileTree({
+  node,
+  canonicalNameById,
+  seasonLabelByFolderId,
+  ignoredIds,
+  depth = 0,
+}: FileTreeProps) {
+  return (
+    <ul
+      className={
+        depth === 0
+          ? "space-y-0.5"
+          : "ml-3 space-y-0.5 border-l border-ink-line pl-3"
+      }
+    >
+      {node.children.map((child) => (
+        <TreeRow
+          key={child.id}
+          node={child}
+          canonicalNameById={canonicalNameById}
+          seasonLabelByFolderId={seasonLabelByFolderId}
+          ignoredIds={ignoredIds}
+          depth={depth}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function TreeRow({
+  node,
+  canonicalNameById,
+  seasonLabelByFolderId,
+  ignoredIds,
+  depth,
+}: {
+  node: TreeNode;
+  canonicalNameById?: Map<string, string>;
+  seasonLabelByFolderId?: Map<string, string>;
+  ignoredIds?: Set<string>;
+  depth: number;
+}) {
+  if (node.kind === "folder") {
+    const seasonLabel =
+      depth === 0 ? seasonLabelByFolderId?.get(node.id) : undefined;
+    return (
+      <li>
+        {/* Folders collapsed by default — no `open` attribute */}
+        <details>
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded px-1.5 py-1 text-sm text-paper marker:content-none hover:bg-ink-elevated">
+            <Folder className="h-4 w-4 flex-shrink-0 text-paper-faint" />
+            <span className="truncate">{node.name}</span>
+            {seasonLabel && (
+              <span className="ticket-tag flex-shrink-0">{seasonLabel}</span>
+            )}
+            <span className="ml-auto flex-shrink-0 font-mono text-[10px] text-paper-faint">
+              {node.children.length}
+            </span>
+          </summary>
+          <FileTree
+            node={node}
+            canonicalNameById={canonicalNameById}
+            seasonLabelByFolderId={seasonLabelByFolderId}
+            ignoredIds={ignoredIds}
+            depth={depth + 1}
+          />
+        </details>
+      </li>
+    );
+  }
+
+  const canonicalName = canonicalNameById?.get(node.id);
+  const isIgnored = node.role === "other" || ignoredIds?.has(node.id);
+
+  return (
+    <li
+      className={`flex items-center gap-2 rounded px-1.5 py-1 text-sm ${isIgnored ? "opacity-40" : ""}`}
+    >
+      {node.role === "video" && (
+        <Film className="h-4 w-4 flex-shrink-0 text-paper-faint" />
+      )}
+      {node.role === "subtitle" && (
+        <BadgeCc className="h-4 w-4 flex-shrink-0 text-paper-faint" />
+      )}
+      {node.role === "other" && (
+        <FileEarmark className="h-4 w-4 flex-shrink-0 text-paper-faint" />
+      )}
+      <span className="truncate text-paper-muted">{node.name}</span>
+      {canonicalName && canonicalName !== node.name && (
+        <span className="flex-shrink-0 font-mono text-[11px] text-marquee">
+          → {canonicalName}
+        </span>
+      )}
+      {isIgnored && (
+        <span className="ml-auto flex-shrink-0 font-mono text-[10px] text-paper-faint">
+          ignored
+        </span>
+      )}
+    </li>
+  );
+}
+
+
+
+================================================================================
+FILE: media\DetailPage.tsx
+================================================================================
+
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useUser } from "@/context/UserContext";
+import {
+  Check,
+  CheckCircle,
+  PlayFill,
+  Plus,
+  PlusCircle,
+} from "react-bootstrap-icons";
+import {
+  useAddToWatchlist,
+  useIsOnWatchlist,
+  useRemoveFromWatchlist,
+} from "@/hooks/useWatchlist";
+import { useResolveShowPlayback } from "@/hooks/usePlayback";
+
+type DetailProps = {
+  title: string;
+  backdropPath: string;
+  subtitle: React.ReactNode; // span element
+  overview: string;
+  genres: string[];
+  isLoading: boolean;
+  error: Error;
+  type: "MOVIE" | "SHOW";
+  id: string;
+  extraContent?: React.ReactNode; // rendered below the regular detail page, e.g. seasons/episodes for a SHOW
+};
+
+const MEDIA_URL_ROOT =
+  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
+
+export default function DetailPage({
+  title,
+  backdropPath,
+  subtitle,
+  overview,
+  genres,
+  isLoading,
+  error,
+  type,
+  id,
+  extraContent,
+}: DetailProps) {
+  const router = useRouter();
+  const { user } = useUser();
+
+  const isOnList = useIsOnWatchlist(user?.id, type, id);
+  const addToWatchlist = useAddToWatchlist(user?.id);
+  const removeFromWatchlist = useRemoveFromWatchlist(user?.id);
+  const resolveShowPlayback = useResolveShowPlayback(user?.id);
+
+  const [backdropOpacity, setBackdropOpacity] = useState(1);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const fadeDistance = 400;
+
+      const opacity = Math.max(0, 1 - window.scrollY / fadeDistance);
+
+      setBackdropOpacity(opacity);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  if (isLoading) {
+    return (
+      <div className={"detail-overlay"}>
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-white" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !title) {
+    return (
+      <div className={"detail-overlay"}>
+        <div className="flex min-h-screen flex-col items-center justify-center">
+          <p className="text-red-400">Failed to load media.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const handlePlay = () => {
+    if (type === "MOVIE") {
+      router.push(`/watch/movie?movie_id=${id}`);
+      return;
+    }
+
+    // SHOW: ask the userservice where this show was left off, then decide
+    // next-episode vs resume-current based on how much of it is watched.
+    if (!user) return;
+
+    resolveShowPlayback.mutate(id, {
+      onSuccess: (target) => {
+        if (target) {
+          router.push(target);
+        }
+        // target is null when there's no watch history for this show yet
+        // (see the TODO in usePlayback.ts — season-1-episode-1 fallback
+        // isn't wired up yet).
+      },
+      onError: (err) => {
+        console.error("Failed to resolve playback target", err);
+      },
+    });
+  };
+
+  const handleToggleList = () => {
+    if (!user) return;
+    if (isOnList) {
+      removeFromWatchlist.mutate({ mediaType: type, mediaId: id });
+    } else {
+      addToWatchlist.mutate({ mediaType: type, mediaId: id });
+    }
+  };
+
+  return (
+    <div className="flex flex-col w-full h-full bg-slate-900">
+      <div className="sticky top-0 h-[50vh] shrink-0">
+        {backdropPath && (
+          <div
+            className="absolute 
+            inset-0 
+            overflow-hidden
+            rounded-2xl
+            pointer-events-none
+            before:absolute
+            before:inset-0
+            before:z-10
+            before:pointer-events-none
+            before:content-['']
+            before:bg-[radial-gradient(circle,rgba(255,255,255,0)_40%,theme(colors.slate.900)_90%),linear-gradient(90deg,theme(colors.slate.900)_0%,rgba(255,255,255,0)_30%,rgba(255,255,255,0)_70%,theme(colors.slate.900)_100%),linear-gradient(180deg,rgba(255,255,255,0)_50%,theme(colors.slate.900)_97%)]
+            before:bg-cover
+            "
+          >
+            <img
+              src={backdropPath}
+              alt=""
+              className="h-full w-full object-cover object-top overflow-hidden "
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Details */}
+      <div className="relative px-8 pb-8 z-100 bg-[linear-gradient(to_bottom,transparent_0%,theme(colors.slate.900)_10%,theme(colors.slate.900)_100%)]">
+        <div className="-mt-24">
+          <div className="max-w-3xl">
+            <h1 className="text-3xl font-bold text-white">{title}</h1>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-slate-400">
+              {subtitle}
+            </div>
+
+            {overview && (
+              <p className="mt-6 text-lg leading-7 text-slate-300">
+                {overview}
+              </p>
+            )}
+            <div className="flex gap-2 mt-4">
+              {genres.map((g, i) => (
+                <div
+                  className="flex rounded-full p-2 pl-4 pr-4 border-2 border-green-400 text-green-400"
+                  key={i}
+                >
+                  {g}
+                </div>
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="mt-8 flex gap-3 ">
+              <button
+                onClick={handlePlay}
+                disabled={type === "SHOW" && resolveShowPlayback.isPending}
+                className="flex items-center gap-2 rounded-full bg-white p-2 pr-6 text-base mb-6 text-black transition hover:bg-slate-200 disabled:opacity-50"
+              >
+                <PlayFill size={40} />
+                Play
+              </button>
+
+              <button
+                onClick={handleToggleList}
+                disabled={!user}
+                className="flex items-center gap-2 rounded-full bg-slate-800 p-2 pr-6 text-base mb-6 text-white transition hover:bg-slate-700 disabled:opacity-50"
+              >
+                {isOnList ? <Check size={40} /> : <Plus size={40} />}
+                My List
+              </button>
+            </div>
+          </div>
+          {extraContent}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: media\MediaElement.tsx
+================================================================================
+
+import Link from "next/link";
+import { MovieSummary } from "@/types/movie";
+import { ShowSummary } from "@/types/show";
+
+type MediaElementProps = {
+  media: MovieSummary | ShowSummary;
+  mediaType: "movie" | "show";
+};
+
+export default function MediaElement({ media, mediaType }: MediaElementProps) {
+  const href =
+    mediaType === "movie"
+      ? `/movies/${media.id}/detail`
+      : `/shows/${media.id}/detail`;
+
+  const year = media.releaseDate
+    ? new Date(media.releaseDate).getFullYear()
+    : null;
+
+  return (
+    <Link href={href} className="group block">
+      {/* Poster */}
+      <div className="aspect-[2/3] overflow-hidden rounded-lg bg-slate-800">
+        {media.posterPath ? (
+          <img
+            src={media.posterPath}
+            alt={media.title}
+            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <span className="px-4 text-center text-sm text-slate-600">
+              No poster
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="mt-2">
+        <h2 className="truncate text-sm font-medium text-white">
+          {media.title}
+        </h2>
+
+        {year && <p className="text-xs text-slate-500">{year}</p>}
+      </div>
+    </Link>
+  );
+}
+
+
+
+================================================================================
+FILE: media\PaginatedMediaPage.tsx
+================================================================================
+
+"use client";
+
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+
+type PaginatedMediaPageProps<T> = {
+  title: string;
+  media: T[];
+  totalElements: number;
+  totalPages: number;
+  currentPage: number;
+  loading: boolean;
+  error: Error | null;
+  renderItem: (item: T) => ReactNode;
+};
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const handle = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(handle);
+  }, [value, delayMs]);
+
+  return debounced;
+}
+
+export default function PaginatedMediaPage<T>({
+  title,
+  media,
+  totalElements,
+  totalPages,
+  currentPage,
+  loading,
+  error,
+  renderItem,
+}: PaginatedMediaPageProps<T>) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const urlSearch = searchParams.get("title") ?? "";
+
+  // Local, immediately-updating input state so typing feels instant.
+  const [searchInput, setSearchInput] = useState(urlSearch);
+  const debouncedSearch = useDebouncedValue(searchInput, 400);
+
+  // If the URL's title param changes from outside this component
+  // (back/forward navigation, a link, etc.), reflect it in the input.
+  useEffect(() => {
+    setSearchInput(urlSearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSearch]);
+
+  // Push the debounced value to the URL, resetting to page 1.
+  const isFirstRun = useRef(true);
+  useEffect(() => {
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      return;
+    }
+
+    const trimmed = debouncedSearch.trim();
+    if (trimmed === urlSearch) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+    if (trimmed) {
+      params.set("title", trimmed);
+    } else {
+      params.delete("title");
+    }
+    params.set("page", "1");
+
+    router.push(`${pathname}?${params.toString()}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
+
+  const changePage = (page: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+
+    params.set("page", page.toString());
+
+    router.push(`${pathname}?${params.toString()}`);
+  };
+
+  const searchBar = (
+    <div className="relative w-full max-w-sm">
+      <svg
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2}
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
+        />
+      </svg>
+
+      <input
+        type="text"
+        value={searchInput}
+        onChange={(e) => setSearchInput(e.target.value)}
+        placeholder={`Search ${title.toLowerCase()}`}
+        aria-label={`Search ${title.toLowerCase()}`}
+        className="w-full rounded-md border border-slate-700 bg-slate-900 py-2 pl-9 pr-9 text-sm text-slate-100 placeholder-slate-500 outline-none transition focus:border-slate-500"
+      />
+
+      {searchInput && (
+        <button
+          type="button"
+          onClick={() => setSearchInput("")}
+          aria-label="Clear search"
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-slate-300"
+        >
+          <svg
+            className="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+
+  if (loading) {
+    return (
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-bold">{title}</h1>
+          {searchBar}
+        </div>
+
+        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {Array.from({ length: 24 }).map((_, index) => (
+            <div
+              key={index}
+              className="aspect-[2/3] animate-pulse rounded-lg bg-slate-800"
+            />
+          ))}
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="mx-auto max-w-7xl px-6 py-8">
+        <h1 className="text-2xl font-bold">{title}</h1>
+
+        <p className="mt-4 text-red-400">
+          Failed to load {title.toLowerCase()}.
+        </p>
+
+        <p className="mt-2 text-sm text-slate-500">{error.message}</p>
+      </main>
+    );
+  }
+
+  return (
+    <main className="mx-auto max-w-7xl px-6 py-10">
+      {/* Header */}
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <h1 className="text-4xl font-bold">{title}</h1>
+
+        <div className="flex items-center gap-4">
+          {searchBar}
+          <span className="whitespace-nowrap text-sm text-slate-500">
+            {totalElements} {totalElements === 1 ? "item" : "items"}
+          </span>
+        </div>
+      </div>
+
+      {/* Grid */}
+      {media.length > 0 ? (
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4">
+          {media.map(renderItem)}
+        </div>
+      ) : (
+        <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-slate-800">
+          <p className="text-slate-500">
+            {urlSearch
+              ? `No ${title.toLowerCase()} found for "${urlSearch}".`
+              : `No ${title.toLowerCase()} found.`}
+          </p>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-10 flex items-center justify-center gap-4">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => changePage(currentPage - 1)}
+            className="rounded-md bg-slate-800 px-4 py-2 text-sm transition hover:bg-slate-700 disabled:opacity-40"
+          >
+            Previous
+          </button>
+
+          <span className="text-sm text-slate-400">
+            {currentPage} / {totalPages}
+          </span>
+
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() => changePage(currentPage + 1)}
+            className="rounded-md bg-slate-800 px-4 py-2 text-sm transition hover:bg-slate-700 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      )}
+    </main>
+  );
+}
+
+
+
+================================================================================
+FILE: MediaCarousel.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import type { MediaSummary } from "@/hooks/useCatalogSummaries";
+import Poster from "./Poster";
+import { ChevronLeft, ChevronRight } from "react-bootstrap-icons";
+
+type MediaCarouselProps = {
+  title: string;
+  items: MediaSummary[];
+  isLoading?: boolean;
+};
+
+// How far one click of an arrow scrolls, as a fraction of the row's
+// visible width — 0.9 rather than 1.0 so the last-visible card before the
+// click stays partially visible as a continuity cue.
+const SCROLL_STEP_FRACTION = 0.9;
+
+export default function MediaCarousel({
+  title,
+  items,
+  isLoading,
+}: MediaCarouselProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 0);
+    // Ceil to absorb sub-pixel rounding so the button doesn't stay
+    // "active" when the row is actually fully scrolled.
+    setCanScrollRight(
+      Math.ceil(el.scrollLeft + el.clientWidth) < el.scrollWidth,
+    );
+  };
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    updateScrollState();
+
+    el.addEventListener("scroll", updateScrollState, { passive: true });
+    // Re-check when the row's own size changes (e.g. loading -> loaded
+    // swaps skeletons for real posters, which can change scrollWidth).
+    const resizeObserver = new ResizeObserver(updateScrollState);
+    resizeObserver.observe(el);
+
+    return () => {
+      el.removeEventListener("scroll", updateScrollState);
+      resizeObserver.disconnect();
+    };
+  }, [items, isLoading]);
+
+  const scrollByPage = (direction: 1 | -1) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollBy({
+      left: direction * el.clientWidth * SCROLL_STEP_FRACTION,
+      behavior: "smooth",
+    });
+  };
+
+  // Hide the whole row rather than showing an empty shelf.
+  if (!isLoading && items.length === 0) return null;
+
+  return (
+    <section>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-4xl font-bold">{title}</h1>
+        {!isLoading && (
+          <span className="text-sm text-slate-500">
+            {items.length} {items.length === 1 ? "item" : "items"}
+          </span>
+        )}
+      </div>
+
+      <div className="group relative">
+        <div
+          ref={scrollRef}
+          className="grid grid-flow-col auto-cols-[15em] gap-4 overflow-x-auto px-8 pb-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {isLoading &&
+            Array.from({ length: 6 }).map((_, i) => (
+              <div
+                key={i}
+                className="aspect-[2/3] w-[160px] animate-pulse rounded-md bg-slate-800"
+              />
+            ))}
+
+          {!isLoading &&
+            items.map((item) => (
+              <div key={item.id} className="w-[15em] py-4">
+                <Poster type={item.mediaType} summary={item} />
+              </div>
+            ))}
+        </div>
+
+        {/* Scroll buttons: only shown once there's somewhere to scroll to,
+            and only visible on hover so they don't clutter a row that
+            already fits on screen. */}
+        {!isLoading && canScrollLeft && (
+          <button
+            onClick={() => scrollByPage(-1)}
+            aria-label={`Scroll ${title} left`}
+            className="text-4xl absolute inset-y-0 left-0 z-10 flex w-12 items-center justify-center bg-gradient-to-r from-black/80 to-transparent text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          >
+            <ChevronLeft />
+          </button>
+        )}
+
+        {!isLoading && canScrollRight && (
+          <button
+            onClick={() => scrollByPage(1)}
+            aria-label={`Scroll ${title} right`}
+            className="text-4xl absolute inset-y-0 right-0 z-10 flex w-12 items-center justify-center bg-gradient-to-l from-black/80 to-transparent text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          >
+            <ChevronRight />
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+
+================================================================================
+FILE: Modal.tsx
+================================================================================
+
+"use client";
+
+import { useRouter } from "next/navigation";
+
+export default function Modal({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+
+  return (
+    <div
+      className="fixed inset-0 z-200 flex items-center justify-center overflow-hidden bg-black/20 backdrop-blur-md"
+      onClick={() => router.back()}
+    >
+      <div
+        className="h-9/10 w-7/10 overflow-auto rounded-2xl shadow-2xl "
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* <button className="bg-red-100 z-100 fixed">x</button> */}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: movies\MovieDetail.tsx
+================================================================================
+
+"use client";
+import DetailPage from "../media/DetailPage";
+import { useMovieDetail } from "@/hooks/useMovieDetail";
+
+type MovieDetailProps = {
+  movieId: string;
+  modal?: boolean;
+};
+
+const MEDIA_URL_ROOT =
+  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
+
+export default function MovieDetail({ movieId }: MovieDetailProps) {
+  const { data: movie, isLoading, error } = useMovieDetail(movieId);
+
+  const releaseYear = movie?.releaseDate
+    ? new Date(movie?.releaseDate).getFullYear()
+    : null;
+
+  const subtitle = (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+      {releaseYear && <span>{releaseYear}</span>}
+
+      {releaseYear && movie?.runtimeMinutes && <span>•</span>}
+
+      {movie?.runtimeMinutes && <span>{movie?.runtimeMinutes} min</span>}
+
+      {movie?.creatorNames && <span>•</span>}
+
+      {movie?.creatorNames && (
+        <span>
+          Directed by{" "}
+          <span className="text-slate-200">{movie?.creatorNames}</span>
+        </span>
+      )}
+    </div>
+  );
+
+  return (
+    movie && (
+      <DetailPage
+        title={movie.title}
+        backdropPath={movie.backdropPath}
+        subtitle={subtitle}
+        isLoading={isLoading}
+        error={error}
+        overview={movie.overview}
+        genres={movie.genres}
+        id={movie.id}
+        type="MOVIE"
+      ></DetailPage>
+    )
+  );
+}
+
+
+
+================================================================================
+FILE: Navbar.tsx
+================================================================================
+
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useUser } from "@/context/UserContext";
+import { BoxArrowLeft } from "react-bootstrap-icons";
+
+const navItems = [
+  { name: "Home", href: "/" },
+  { name: "My List", href: "/my-list" },
+  { name: "Movies", href: "/movies" },
+  { name: "Shows", href: "/shows" },
+  { name: "Upload", href: "/upload" },
+];
+
+export default function Navbar() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { user, clearUser } = useUser();
+
+  const handleSwitchProfile = () => {
+    clearUser();
+    router.push("/profiles");
+  };
+
+  return (
+    <header className="border-b border-slate-800 bg-slate-950 sticky top-0 z-100">
+      <nav className="mx-auto flex h-16 max-w-7xl items-center px-6">
+        {/* Logo */}
+        <Link
+          href="/"
+          className="mr-12 text-2xl font-bold tracking-tight text-white"
+        >
+          KatyaFlix
+        </Link>
+
+        {/* Navigation */}
+        <div className="flex h-full flex-1 items-center gap-8">
+          {navItems.map((item) => {
+            const isActive =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`relative flex h-full items-center text-sm font-medium transition-colors ${
+                  isActive ? "text-white" : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {item.name}
+
+                {/* Active indicator */}
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-white" />
+                )}
+              </Link>
+            );
+          })}
+        </div>
+
+        {/* Active profile — click to switch */}
+        {user && (
+          <button
+            onClick={handleSwitchProfile}
+            title="Switch profile"
+            className="flex items-center gap-4 rounded-full py-1 pl-1 pr-3 text-sm text-slate-300 transition "
+          >
+            <span className="flex h-[2.5rem] w-[2.5rem] items-center justify-center overflow-hidden rounded-full bg-slate-800">
+              {user.profilePictureUrl ? (
+                <img
+                  src={user.profilePictureUrl}
+                  alt={user.displayName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-[10px] text-slate-500">pfp</span>
+              )}
+            </span>
+            <span className="max-w-[8rem] text-lg font-bold truncate">
+              {user.displayName}
+            </span>
+            <BoxArrowLeft size={25} className="hover:text-white" />
+          </button>
+        )}
+      </nav>
+    </header>
+  );
+}
+
+
+
+================================================================================
+FILE: Pagination.tsx
+================================================================================
+
+// interface PaginationProps {
+//   page: number;
+//   totalPages: number;
+//   onPageChange: (page: number) => void;
+// }
+
+// export default function Pagination({ page, totalPages, onPageChange }: PaginationProps) {
+//   if (totalPages <= 1) return null;
+
+//   const pages = getPageList(page, totalPages);
+
+//   return (
+//     <nav className="flex items-center justify-center gap-1" aria-label="Pagination">
+//       <button
+//         type="button"
+//         onClick={() => onPageChange(page - 1)}
+//         disabled={page === 1}
+//         className="rounded px-3 py-2 font-mono text-xs uppercase tracking-widest text-paper-muted transition-colors hover:bg-ink-raised hover:text-paper disabled:pointer-events-none disabled:opacity-30"
+//       >
+//         Prev
+//       </button>
+
+//       {pages.map((p, i) =>
+//         p === 'ellipsis' ? (
+//           <span key={`e-${i}`} className="px-2 font-mono text-xs text-paper-faint">
+//             …
+//           </span>
+//         ) : (
+//           <button
+//             key={p}
+//             type="button"
+//             onClick={() => onPageChange(p)}
+//             aria-current={p === page ? 'page' : undefined}
+//             className={`h-9 w-9 rounded font-mono text-xs transition-colors ${
+//               p === page
+//                 ? 'bg-marquee text-ink font-semibold'
+//                 : 'text-paper-muted hover:bg-ink-raised hover:text-paper'
+//             }`}
+//           >
+//             {p}
+//           </button>
+//         )
+//       )}
+
+//       <button
+//         type="button"
+//         onClick={() => onPageChange(page + 1)}
+//         disabled={page === totalPages}
+//         className="rounded px-3 py-2 font-mono text-xs uppercase tracking-widest text-paper-muted transition-colors hover:bg-ink-raised hover:text-paper disabled:pointer-events-none disabled:opacity-30"
+//       >
+//         Next
+//       </button>
+//     </nav>
+//   );
+// }
+
+// function getPageList(page: number, totalPages: number): (number | 'ellipsis')[] {
+//   const delta = 1;
+//   const range: (number | 'ellipsis')[] = [];
+//   const rangeStart = Math.max(2, page - delta);
+//   const rangeEnd = Math.min(totalPages - 1, page + delta);
+
+//   range.push(1);
+//   if (rangeStart > 2) range.push('ellipsis');
+//   for (let i = rangeStart; i <= rangeEnd; i++) range.push(i);
+//   if (rangeEnd < totalPages - 1) range.push('ellipsis');
+//   if (totalPages > 1) range.push(totalPages);
+
+//   return range;
+// }
+
+
+
+================================================================================
+FILE: Poster.tsx
+================================================================================
+
+"use client";
+
+import Link from "next/link";
+// import { MovieSummary } from "@/types/movie";
+// import { ShowSummary } from "@/types/show";
+import { MediaSummary } from "@/hooks/useCatalogSummaries";
+
+interface PosterProps {
+  summary: MediaSummary;
+  type: "MOVIE" | "SHOW";
+}
+
+export default function Poster({ summary, type }: PosterProps) {
+  const reference = type == "MOVIE" ? "movies" : "shows";
+
+  return (
+    <Link
+      key={summary.id}
+      href={`/${reference}/${summary.id}/detail`}
+      className="group"
+    >
+      <div key={summary.id}>
+        <div
+          className="
+              z-1
+              aspect-[2/3]
+              overflow-hidden
+              rounded-lg
+              outline-slate-800
+              bg-slate-800
+              transition-all
+              duration-200
+              ease-out
+              hover:scale-[1.03]
+              hover:outline
+              hover:outline-6
+              hover:outline-offset-2
+              hover:outline-slate-700
+              hover:shadow-xl
+            "
+        >
+          {summary.posterPath && (
+            <img
+              src={summary.posterPath}
+              alt={summary.title}
+              className="h-full w-full object-cover"
+            />
+          )}
+        </div>
+
+        <h2 className="mt-2 text-lg text-center font-base ">{summary.title}</h2>
+      </div>
+    </Link>
+  );
+}
+
+
+
+================================================================================
+FILE: profiles\ProfileEditor.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+// import { Check, Trash2, X } from "lucide-react";
+import { useProfilePictures } from "@/hooks/useProfilePictures";
+import {
+  useCreateProfile,
+  useDeleteProfile,
+  useUpdateProfile,
+  type Profile,
+} from "@/hooks/useProfiles";
+import { useUser } from "@/context/UserContext";
+import { Check, Trash, X } from "react-bootstrap-icons";
+
+type ProfileEditorProps =
+  | { mode: "create"; profile?: undefined }
+  | { mode: "edit"; profile: Profile };
+
+export default function ProfileEditor({ mode, profile }: ProfileEditorProps) {
+  const router = useRouter();
+  const { user, setUser, clearUser } = useUser();
+  const { data: pictures, isLoading: picturesLoading } = useProfilePictures();
+
+  const [displayName, setDisplayName] = useState(profile?.displayName ?? "");
+  const [selectedPictureId, setSelectedPictureId] = useState<string | null>(
+    profile?.profilePictureId ?? null,
+  );
+
+  const createProfile = useCreateProfile();
+  const updateProfile = useUpdateProfile();
+  const deleteProfile = useDeleteProfile();
+
+  useEffect(() => {
+    // Default new profiles to the first available picture once options load.
+    if (mode === "create" && !selectedPictureId && pictures?.length) {
+      setSelectedPictureId(pictures[0].id);
+    }
+  }, [mode, pictures, selectedPictureId]);
+
+  const selectedPicture = pictures?.find((p) => p.id === selectedPictureId);
+  const isSaving = createProfile.isPending || updateProfile.isPending;
+  const isDeleting = deleteProfile.isPending;
+
+  const handleSave = async () => {
+    const trimmedName = displayName.trim();
+    if (!trimmedName) return;
+
+    if (mode === "create") {
+      await createProfile.mutateAsync({
+        displayName: trimmedName,
+        profilePictureId: selectedPictureId,
+      });
+    } else {
+      const updated = await updateProfile.mutateAsync({
+        id: profile.id,
+        displayName: trimmedName,
+        profilePictureId: selectedPictureId,
+      });
+      // Keep the active session in sync if this is the currently-active profile.
+      if (user?.id === profile.id) {
+        setUser({
+          id: updated.id,
+          displayName: updated.displayName,
+          profilePictureUrl: updated.profilePictureUrl,
+        });
+      }
+    }
+    router.push("/profiles");
+  };
+
+  const handleDelete = async () => {
+    if (mode !== "edit") return;
+    await deleteProfile.mutateAsync(profile.id);
+    if (user?.id === profile.id) {
+      clearUser();
+    }
+    router.push("/profiles");
+  };
+
+  return (
+    // <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
+    <div className="w-full max-w-2xl rounded-2xl bg-slate-900 p-8">
+      <div className="flex items-center gap-6">
+        <div className="flex h-[8vw] w-[8vw] shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-800 text-slate-500">
+          {selectedPicture ? (
+            <img
+              src={selectedPicture.url}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <span className="text-xs">pfp</span>
+          )}
+        </div>
+
+        <input
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Profile name"
+          maxLength={40}
+          className="flex-1 rounded-md border-4 border-slate-700 bg-slate-950 px-4 py-2.5 text-white placeholder:text-slate-500 focus:border-white focus:outline-none"
+        />
+      </div>
+
+      <div className="mt-8">
+        <p className="mb-3 text-lg text-slate-400">Choose a picture</p>
+
+        {picturesLoading ? (
+          <div className="h-24 animate-pulse rounded-lg bg-slate-800" />
+        ) : (
+          <div className="flex gap-3 overflow-x-auto rounded-lg border-4 border-slate-800 bg-slate-950 p-3">
+            {pictures?.map((picture) => {
+              const isSelected = picture.id === selectedPictureId;
+              return (
+                <button
+                  key={picture.id}
+                  onClick={() => setSelectedPictureId(picture.id)}
+                  title={picture.name}
+                  className={`h-[6vw] w-[6vw] shrink-0 overflow-hidden rounded-full transition ${
+                    isSelected
+                      ? "border-white"
+                      : "border-transparent opacity-70 hover:opacity-100"
+                  }`}
+                >
+                  <img
+                    src={picture.url}
+                    alt={picture.name}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8 flex items-center justify-between">
+        {mode === "edit" ? (
+          <button
+            onClick={handleDelete}
+            disabled={isDeleting}
+            className="flex items-center gap-2 text-sm font-medium text-red-400 transition hover:text-red-300 disabled:opacity-50"
+          >
+            <Trash />
+            Delete profile
+          </button>
+        ) : (
+          <span />
+        )}
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push("/profiles")}
+            title="Cancel"
+            className="flex h-12 w-12 items-center justify-center rounded-full border-4 border-slate-600 text-slate-300 transition hover:border-white hover:text-white"
+          >
+            <X size={30} />
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isSaving || !displayName.trim()}
+            title="Save"
+            className="flex h-12 w-12 items-center justify-center rounded-full border-4 border-green-400 text-green-400 transition hover:bg-green-400 hover:text-black disabled:opacity-40"
+          >
+            <Check size={30} />
+          </button>
+        </div>
+      </div>
+    </div>
+    // </div>
+  );
+}
+
+
+
+================================================================================
+FILE: profiles\ProfileGate.tsx
+================================================================================
+
+"use client";
+
+import { useRequireProfile } from "@/hooks/useRequireProfile";
+// enforce user must be selected before showing the rest of th eapp
+export default function ProfileGate({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  useRequireProfile();
+  return <>{children}</>;
+}
+
+
+
+================================================================================
+FILE: profiles\ProfileSelector.tsx
+================================================================================
+
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+// import { Check, Pencil, Plus } from "lucide-react";
+import { useProfiles, type Profile } from "@/hooks/useProfiles";
+import { useUser } from "@/context/UserContext";
+import { Check, PencilFill, Plus } from "react-bootstrap-icons";
+
+export default function ProfileSelector() {
+  const router = useRouter();
+  const { setUser } = useUser();
+  const { data: profiles, isLoading, error } = useProfiles();
+  const [manageMode, setManageMode] = useState(false);
+
+  const handleSelect = (profile: Profile) => {
+    if (manageMode) {
+      router.push(`/profiles/${profile.id}/edit`);
+      return;
+    }
+    setUser({
+      id: profile.id,
+      displayName: profile.displayName,
+      profilePictureUrl: profile.profilePictureUrl,
+    });
+    router.push("/");
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-950">
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-white" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex h-full items-center justify-center bg-slate-950">
+        <p className="text-red-400">Failed to load profiles.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-10 bg-slate-950 px-6">
+      <h1 className="text-3xl font-semibold text-white">
+        {manageMode ? "Manage profiles" : "Select a profile"}
+      </h1>
+
+      <div className="flex flex-wrap items-start justify-center gap-8">
+        {profiles?.map((profile) => (
+          <button
+            key={profile.id}
+            onClick={() => handleSelect(profile)}
+            className="group flex flex-col items-center gap-2"
+          >
+            <div
+              className={`relative flex  h-[10vw] w-[10vw] items-center justify-center overflow-hidden rounded-full border-4 bg-slate-800 text-slate-500 transition ${
+                manageMode
+                  ? "border-slate-500 group-hover:border-white"
+                  : "border-transparent group-hover:border-white"
+              }`}
+            >
+              {profile.profilePictureUrl ? (
+                <img
+                  src={profile.profilePictureUrl}
+                  alt={profile.displayName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-xs">pfp</span>
+              )}
+
+              {manageMode && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition group-hover:opacity-100"></div>
+              )}
+            </div>
+            <span className="truncate text-sm text-slate-300 group-hover:text-white">
+              {profile.displayName}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-4">
+        <button
+          onClick={() => router.push("/profiles/new")}
+          title="Add profile"
+          className="flex h-[3vw] w-[3vw] items-center justify-center rounded-full border-4 border-slate-600 text-slate-300 transition hover:border-white hover:text-white"
+        >
+          <Plus size={50} />
+        </button>
+        <button
+          onClick={() => setManageMode((prev) => !prev)}
+          title="Manage profiles"
+          className={`flex h-[3vw] w-[3vw] items-center justify-center rounded-full border-4 transition ${
+            manageMode
+              ? "border-white text-white"
+              : "border-slate-600 text-slate-300 hover:border-white hover:text-white"
+          }`}
+        >
+          {manageMode ? (
+            <Check size={40} />
+          ) : (
+            // <Check className="h-5 w-5" />
+            <PencilFill size={30} />
+            // <Pencil className="h-5 w-5" />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: shows\SeasonEpisodesSection.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useShowSeasons } from "@/hooks/useShowSeasons";
+import { useSeasonEpisodes } from "@/hooks/useShowEpisodes";
+import { useEpisodeWatchtimes } from "@/hooks/useWatchtime";
+
+function formatRuntime(minutes: number | null) {
+  if (!minutes) return null;
+  return `${minutes}m`;
+}
+
+function formatAirDate(dateString: string | null) {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+// Fraction watched, clamped to [0, 1]. Returns null when we don't have
+// enough info to compute it (no runtime, or nothing watched yet).
+function getProgressRatio(
+  watchtimeSeconds: number | undefined,
+  durationSeconds: number | null,
+) {
+  if (!watchtimeSeconds || !durationSeconds) return null;
+  if (durationSeconds <= 0) return null;
+  return Math.min(1, Math.max(0, watchtimeSeconds / durationSeconds));
+}
+
+type SeasonEpisodesSectionProps = {
+  showId: string;
+  userId: string;
+};
+
+export default function SeasonEpisodesSection({
+  showId,
+  userId,
+}: SeasonEpisodesSectionProps) {
+  const router = useRouter();
+
+  const {
+    data: seasons,
+    isLoading: seasonsLoading,
+    error: seasonsError,
+  } = useShowSeasons(showId);
+
+  const [selectedSeasonNumber, setSelectedSeasonNumber] = useState<
+    number | null
+  >(null);
+
+  // Default to the first season once seasons load.
+  useEffect(() => {
+    if (seasons && seasons.length > 0 && selectedSeasonNumber === null) {
+      setSelectedSeasonNumber(seasons[0].seasonNumber);
+    }
+  }, [seasons, selectedSeasonNumber]);
+
+  const selectedSeason = useMemo(
+    () => seasons?.find((s) => s.seasonNumber === selectedSeasonNumber),
+    [seasons, selectedSeasonNumber],
+  );
+
+  const {
+    data: episodes,
+    isLoading: episodesLoading,
+    error: episodesError,
+  } = useSeasonEpisodes(showId, selectedSeasonNumber);
+  const episodeIds = useMemo(
+    () => (episodes ? episodes.map((episode) => episode.id) : undefined),
+    [episodes],
+  );
+  const { data: watchtimes } = useEpisodeWatchtimes(userId, episodeIds);
+
+  const watchtimeByEpisodeId = useMemo(() => {
+    const map = new Map<string, number>();
+    watchtimes?.forEach((wt) => {
+      if (wt.mediaType === "EPISODE") {
+        map.set(wt.mediaId, wt.watchtimeSeconds);
+      }
+    });
+    return map;
+  }, [watchtimes]);
+
+  const durationByEpisodeId = useMemo(() => {
+    const map = new Map<string, number>();
+    watchtimes?.forEach((wt) => {
+      if (wt.mediaType === "EPISODE") {
+        map.set(wt.mediaId, wt.durationSeconds);
+      }
+    });
+    return map;
+  }, [watchtimes]);
+
+  const handlePlayEpisode = (episodeId: string) => {
+    router.push(`/watch/episode?episode_id=${episodeId}`);
+  };
+
+  if (seasonsError) {
+    return (
+      <div className="px-8 pb-8">
+        <p className="text-sm text-red-400">Failed to load seasons.</p>
+      </div>
+    );
+  }
+
+  if (!seasonsLoading && (!seasons || seasons.length === 0)) {
+    return null;
+  }
+
+  return (
+    <div className="border-t border-slate-800 px-8 py-8 h-full">
+      <div className="flex flex-col gap-8 lg:flex-row">
+        {/* Left: season selector + poster */}
+        <div className="w-full shrink-0 lg:w-56">
+          {seasonsLoading ? (
+            <div className="h-10 w-full animate-pulse rounded-md bg-slate-800" />
+          ) : (
+            <select
+              value={selectedSeasonNumber ?? ""}
+              onChange={(e) => setSelectedSeasonNumber(Number(e.target.value))}
+              className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-slate-500 focus:outline-none"
+            >
+              {seasons?.map((season) => (
+                <option key={season.seasonId} value={season.seasonNumber}>
+                  {season.title}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <div className="mt-4 aspect-[2/3] w-full overflow-hidden rounded-md bg-slate-800">
+            {selectedSeason?.posterPath && (
+              <img
+                src={selectedSeason.posterPath ?? undefined}
+                alt={selectedSeason.title}
+                className="h-full w-full object-cover"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Right: episode list */}
+        <div className="min-w-0 flex-1">
+          {episodesError && (
+            <p className="text-sm text-red-400">Failed to load episodes.</p>
+          )}
+
+          {episodesLoading && (
+            <div className="flex flex-col gap-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex gap-4">
+                  <div className="aspect-video w-40 shrink-0 animate-pulse rounded-md bg-slate-800" />
+                  <div className="flex-1 space-y-2 py-1">
+                    <div className="h-4 w-1/3 animate-pulse rounded bg-slate-800" />
+                    <div className="h-3 w-full animate-pulse rounded bg-slate-800" />
+                    <div className="h-3 w-2/3 animate-pulse rounded bg-slate-800" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!episodesLoading && episodes && episodes.length === 0 && (
+            <p className="text-sm text-slate-400">
+              No episodes available for this season.
+            </p>
+          )}
+
+          {!episodesLoading && episodes && episodes.length > 0 && (
+            <div className="divide-y divide-slate-800">
+              {episodes.map((episode) => {
+                const runtime = formatRuntime(episode.runtimeMinutes);
+                const airDate = formatAirDate(episode.airDate);
+                const meta = [runtime, airDate].filter(Boolean).join(" • ");
+                const progressRatio = getProgressRatio(
+                  watchtimeByEpisodeId.get(episode.id),
+                  durationByEpisodeId.get(episode.id),
+                );
+
+                return (
+                  <button
+                    key={episode.id}
+                    onClick={() => handlePlayEpisode(episode.id)}
+                    className="group flex w-full gap-4 rounded-md px-2 py-4 text-left transition hover:bg-slate-800/40"
+                  >
+                    <div className="relative aspect-video w-40 shrink-0 overflow-hidden rounded-md bg-slate-800">
+                      {episode.stillPath && (
+                        <img
+                          src={episode.stillPath ?? undefined}
+                          alt={episode.title}
+                          className="h-full w-full object-cover"
+                        />
+                      )}
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/40">
+                        <span className="text-2xl text-white opacity-0 transition group-hover:opacity-100">
+                          ▶
+                        </span>
+                      </div>
+
+                      {progressRatio !== null && (
+                        <div className="absolute inset-x-0 bottom-0 h-1 bg-black/50">
+                          <div
+                            className="h-full bg-green-600"
+                            style={{ width: `${progressRatio * 100}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <h3 className="truncate font-medium text-white">
+                          {episode.episodeNumber}. {episode.title}
+                        </h3>
+                        {meta && (
+                          <span className="shrink-0 text-xs text-slate-400">
+                            {meta}
+                          </span>
+                        )}
+                      </div>
+                      {episode.overview && (
+                        <p className="mt-1 line-clamp-2 text-sm text-slate-400">
+                          {episode.overview}
+                        </p>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: shows\ShowDetail.tsx
+================================================================================
+
+"use client";
+
+import { useShowDetail } from "@/hooks/useShowDetail";
+import { useUser } from "@/context/UserContext";
+import DetailPage from "../media/DetailPage";
+import SeasonEpisodesSection from "./SeasonEpisodesSection";
+type ShowDetailProps = {
+  showId: string;
+  modal?: boolean;
+};
+
+export default function ShowDetail({ showId, modal = false }: ShowDetailProps) {
+  const { data: show, isLoading, error } = useShowDetail(showId);
+  const { user } = useUser();
+  if (isLoading) {
+    return <DetailPage isLoading={true} />;
+  }
+
+  if (error || !show) {
+    return <DetailPage isLoading={false} error={error} />;
+  }
+
+  const firstAirYear = show.firstAirDate
+    ? new Date(show.firstAirDate).getFullYear()
+    : null;
+
+  const subtitle = (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-zinc-400">
+      {firstAirYear && <span>{firstAirYear}</span>}
+
+      {show.status && (
+        <>
+          <span>•</span>
+          <span>{show.status}</span>
+        </>
+      )}
+
+      {show.creatorNames && (
+        <>
+          <span>•</span>
+          <span>
+            Created by{" "}
+            <span className="text-zinc-200">{show.creatorNames}</span>
+          </span>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <DetailPage
+      title={show.title}
+      backdropPath={show.backdropPath}
+      subtitle={subtitle}
+      overview={show.overview}
+      isLoading={isLoading}
+      error={error}
+      genres={show.genres}
+      type="SHOW"
+      id={show.id}
+      extraContent={<SeasonEpisodesSection userId={user.id} showId={show.id} />}
+    />
+  );
+}
+
+
+
+================================================================================
+FILE: TmdbSearch.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { searchTmdb, tmdbImage, TmdbMediaType } from "@/lib/tmdb";
+import { TmdbSearchResult } from "@/lib/types";
+
+interface TmdbSearchProps {
+  type: TmdbMediaType;
+  selected: TmdbSearchResult | null;
+  onSelect: (result: TmdbSearchResult | null) => void;
+}
+
+export default function TmdbSearch({
+  type,
+  selected,
+  onSelect,
+}: TmdbSearchProps) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<TmdbSearchResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      setError(null);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const controller = new AbortController();
+
+    // debounce and abort search on change
+    const timeout = setTimeout(async () => {
+      try {
+        const res = await searchTmdb(type, query, controller.signal);
+
+        // Only update state if this request wasn't cancelled
+        if (!controller.signal.aborted) {
+          setResults(res);
+          setIsOpen(true);
+        }
+      } catch (err) {
+        // AbortError is expected when the user types again
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
+
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Search failed");
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [query, type]);
+
+  if (selected) {
+    return (
+      <div className="flex items-center gap-4 rounded-lg border border-ink-line bg-ink-raised p-4">
+        <div className="h-28 w-20 flex-shrink-0 overflow-hidden rounded bg-ink-elevated">
+          {tmdbImage(selected.posterPath) ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={tmdbImage(selected.posterPath, "w200")!}
+              alt=""
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <PosterFallback />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="eyebrow">Selected {type === "tv" ? "show" : "movie"}</p>
+          <p className="mt-1 truncate font-display text-xl font-bold text-paper">
+            {selected.title}
+          </p>
+          <p className="font-mono text-sm text-paper-muted">{selected.year}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onSelect(null);
+            setQuery("");
+          }}
+          className="flex-shrink-0 rounded border border-ink-line px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-paper-muted hover:border-paper-faint hover:text-paper"
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onFocus={() => results.length > 0 && setIsOpen(true)}
+        placeholder={
+          type === "tv"
+            ? "Search for a show on TMDB…"
+            : "Search for a movie on TMDB…"
+        }
+        className="w-full rounded-lg border border-ink-line bg-ink-raised px-4 py-3 text-paper placeholder:text-paper-faint focus:border-marquee"
+      />
+
+      {isOpen && query.trim().length > 0 && (
+        <div className="absolute z-20 mt-2 max-h-96 w-full overflow-y-auto rounded-lg border border-ink-line bg-ink-raised shadow-modal animate-rise-in bg-slate-900">
+          {isLoading && (
+            <p className="p-4 font-mono text-xs text-paper-muted">Searching…</p>
+          )}
+
+          {!isLoading && error && (
+            <p className="p-4 font-mono text-xs text-signal-error">{error}</p>
+          )}
+
+          {!isLoading && !error && results.length === 0 && (
+            <p className="p-4 font-mono text-xs text-paper-muted">
+              No results for &ldquo;{query}&rdquo;.
+            </p>
+          )}
+
+          {!isLoading &&
+            !error &&
+            results.map((result) => (
+              <button
+                key={result.id}
+                type="button"
+                onClick={() => {
+                  onSelect(result);
+                  setIsOpen(false);
+                }}
+                className="flex w-full items-center gap-3 border-b border-ink-line/60 p-3 text-left last:border-b-0 hover:bg-ink-elevated  hover:bg-slate-700"
+              >
+                <div className="h-16 w-11 flex-shrink-0 overflow-hidden rounded bg-ink-elevated">
+                  {tmdbImage(result.posterPath) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={tmdbImage(result.posterPath, "w200")!}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <PosterFallback small />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-paper">
+                    {result.title}
+                  </p>
+                  <p className="font-mono text-xs text-paper-muted">
+                    {result.year}
+                  </p>
+                </div>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PosterFallback({ small }: { small?: boolean }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center text-paper-faint">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        className={small ? "h-4 w-4" : "h-6 w-6"}
+        aria-hidden="true"
+      >
+        <rect
+          x="3"
+          y="3"
+          width="18"
+          height="18"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M3 16l5-5 4 4 3-3 6 6"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+      </svg>
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: UploadDropzone.tsx
+================================================================================
+
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import {
+  collectFromDataTransfer,
+  collectFromFileList,
+  DroppedFile,
+} from "@/lib/files";
+import { CloudArrowUp, Upload } from "react-bootstrap-icons";
+
+interface UploadDropzoneProps {
+  onFiles: (files: DroppedFile[]) => void;
+}
+
+export default function UploadDropzone({ onFiles }: UploadDropzoneProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [isReading, setIsReading] = useState(false);
+  const dragCounter = useRef(0);
+  const filesInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    folderInputRef.current?.setAttribute("webkitdirectory", "");
+    folderInputRef.current?.setAttribute("directory", "");
+  }, []);
+
+  async function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    setIsReading(true);
+    try {
+      onFiles(await collectFromDataTransfer(e.dataTransfer));
+    } finally {
+      setIsReading(false);
+    }
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) onFiles(collectFromFileList(e.target.files));
+    e.target.value = "";
+  }
+
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragCounter.current += 1;
+        setIsDragging(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragCounter.current -= 1;
+        if (dragCounter.current <= 0) setIsDragging(false);
+      }}
+      onDrop={handleDrop}
+      className={`rounded-lg border-2 border-dashed p-10 text-center transition-colors ${
+        isDragging
+          ? "border-marquee bg-marquee/[0.06]"
+          : "border-ink-line bg-ink-raised/40"
+      }`}
+    >
+      <Upload className="mx-auto h-8 w-8 text-paper-faint" />
+      <p className="mt-3 text-paper">
+        {isReading ? "Reading files…" : "Drag files or folders here"}
+      </p>
+      <p className="mt-1 font-mono text-xs text-paper-muted">or</p>
+
+      <div className="mt-3 flex justify-center gap-3">
+        <button
+          type="button"
+          onClick={() => filesInputRef.current?.click()}
+          className="rounded border border-ink-line px-4 py-2 font-mono text-xs uppercase tracking-widest text-paper-muted hover:border-paper-faint hover:text-paper"
+        >
+          Choose files
+        </button>
+        <button
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          className="rounded border border-ink-line px-4 py-2 font-mono text-xs uppercase tracking-widest text-paper-muted hover:border-paper-faint hover:text-paper"
+        >
+          Choose a folder
+        </button>
+      </div>
+
+      <input
+        ref={filesInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleInputChange}
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleInputChange}
+      />
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: UploadJobStatusPanel.tsx
+================================================================================
+
+"use client";
+
+import { useUploadJobStatus } from "@/hooks/useUploadJobStatus";
+import { STATUS_LABELS } from "@/types/uploadJobs";
+
+export default function UploadJobStatusPanel({ jobId }: { jobId: string }) {
+  const { job, connected, error } = useUploadJobStatus(jobId);
+
+  if (!job) {
+    return (
+      <div className="rounded-lg border border-ink-line bg-ink-raised p-4">
+        <p className="font-mono text-xs text-paper-muted">
+          Connecting to job {jobId}…
+        </p>
+      </div>
+    );
+  }
+
+  const failed = job.status === "FAILURE";
+
+  return (
+    <div className="rounded-lg border border-ink-line bg-ink-raised p-4">
+      <div className="flex items-center justify-between">
+        <p className="font-mono text-xs uppercase tracking-widest text-paper-muted">
+          {job.title}
+        </p>
+
+        <span
+          className={`font-mono text-[10px] uppercase tracking-widest ${
+            connected ? "text-reel" : "text-paper-faint"
+          }`}
+        >
+          {connected ? "live" : "reconnecting…"}
+        </span>
+      </div>
+
+      <p
+        className={`mt-1 font-mono text-sm ${
+          failed ? "text-signal-error" : "text-paper"
+        }`}
+      >
+        {STATUS_LABELS[job.status]}
+        {job.currentStep ? ` — ${job.currentStep}` : ""}
+      </p>
+
+      {!failed && (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-ink-line">
+          <div className="h-full rounded-full bg-marquee transition-all" />
+        </div>
+      )}
+
+      {job.errorMessages.length > 0 && (
+        <ul className="mt-3 space-y-1">
+          {job.errorMessages.map((message, i) => (
+            <li key={i} className="font-mono text-xs text-signal-error">
+              {message}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && (
+        <p className="mt-3 font-mono text-xs text-paper-muted">{error}</p>
+      )}
+    </div>
+  );
+}
+
+
+
+================================================================================
+FILE: watch\WatchClient.tsx
+================================================================================
+
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useMoviePlayback,
+  useEpisodePlayback,
+  useNextEpisode,
+} from "@/hooks/usePlayback";
+import { useUser } from "@/context/UserContext";
+import { useEpisodeWatchtime, useMovieWatchtime } from "@/hooks/useWatchtime";
+import { useWatchtimeSync } from "@/hooks/useWatchtimeSync";
+import { CustomVideoPlayer } from "@/components/CustomVideoPlayer";
+
+const MEDIA_URL_ROOT =
+  process.env.NEXT_PUBLIC_MEDIA_URL_ROOT ?? "http://localhost:8081/media";
+
+// Don't bother resuming if the viewer was basically at the start, or
+// basically at the end (in which case just start over).
+const RESUME_MIN_SECONDS = 10;
+
+// The metadata CustomVideoPlayer needs (title, overview, episode/season
+// numbers) isn't on the original playback response shape — only `filePath`
+// and `subtitles` were. These types document what to add to your
+// useMoviePlayback / useEpisodePlayback responses; adjust field names to
+// match your actual API.
+type MoviePlaybackMeta = {
+  filePath: string;
+  title: string;
+  overview?: string;
+  subtitles?: import("@/components/CustomVideoPlayer").SubtitleTrack[];
+};
+type EpisodePlaybackMeta = {
+  filePath: string;
+  title: string; // episode title
+  showTitle: string;
+  showId: string;
+  seasonId: string;
+  episodeNumber: number;
+  seasonNumber: number;
+  overview?: string;
+  subtitles?: import("@/components/CustomVideoPlayer").SubtitleTrack[];
+};
+
+export default function WatchClient() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { user } = useUser();
+
+  const movieId = searchParams.get("movie_id") ?? undefined;
+  const episodeId = searchParams.get("episode_id") ?? undefined;
+  const mediaType = movieId ? "MOVIE" : episodeId ? "EPISODE" : null;
+
+  const [isPlaying, setIsPlaying] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Both hooks are called unconditionally (rules of hooks), but each is
+  // internally `enabled` only when its id is present, so only one ever
+  // actually fetches.
+  const movieQuery = useMoviePlayback(movieId);
+  const episodeQuery = useEpisodePlayback(episodeId);
+  const {
+    data: playback,
+    isLoading,
+    error,
+  } = mediaType === "MOVIE" ? movieQuery : episodeQuery;
+
+  // Fetched as soon as we know the episode — not gated on the episode
+  // having ended — so the player's next-episode button has a preview
+  // ready to show on hover throughout playback.
+  const { data: nextEpisode } = useNextEpisode(episodeId, {
+    enabled: mediaType === "EPISODE" && !!episodeId,
+  });
+
+  // Last saved position, so we can resume from where the user left off.
+  const movieWatchtime = useMovieWatchtime(
+    user?.id,
+    mediaType === "MOVIE" ? movieId : undefined,
+  );
+  const episodeWatchtime = useEpisodeWatchtime(
+    user?.id,
+    mediaType === "EPISODE" ? episodeId : undefined,
+  );
+  // Left undefined (not coalesced to 0) until the query actually resolves —
+  // CustomVideoPlayer uses "is this defined yet" to know it's safe to seek,
+  // so collapsing "not fetched yet" into 0 here would make it commit to a
+  // resume position before we actually know it.
+  const resumeSeconds = (
+    mediaType === "MOVIE" ? movieWatchtime.data : episodeWatchtime.data
+  )?.watchtimeSeconds;
+
+  // Split the union into its two branches so the metadata fields below are
+  // type-safe instead of relying on inline casts scattered through the JSX.
+  // Done ahead of useWatchtimeSync below because that hook needs
+  // episodePlayback's showId/seasonId.
+  const moviePlayback =
+    mediaType === "MOVIE"
+      ? (playback as MoviePlaybackMeta | undefined)
+      : undefined;
+  const episodePlayback =
+    mediaType === "EPISODE"
+      ? (playback as EpisodePlaybackMeta | undefined)
+      : undefined;
+
+  // Periodically PUTs the current playback position (+ total duration) to
+  // the user-service over REST, so progress survives a refresh, a closed
+  // tab, or a switch to another device. showId/seasonId are only sent for
+  // episodes; undefined for movies.
+  useWatchtimeSync({
+    userId: user?.id,
+    mediaType: mediaType === "MOVIE" ? "MOVIE" : "EPISODE",
+    mediaId: mediaType === "MOVIE" ? movieId : episodeId,
+    showId: episodePlayback?.showId,
+    seasonId: episodePlayback?.seasonId,
+    getCurrentTimeSeconds: () => videoRef.current?.currentTime ?? 0,
+    getDurationSeconds: () => videoRef.current?.duration ?? 0,
+    isActive: isPlaying,
+  });
+
+  const videoSrc = useMemo(
+    () => (playback ? `${MEDIA_URL_ROOT}${playback.filePath}` : null),
+    [playback],
+  );
+
+  const handlePlayNext = () => {
+    if (nextEpisode) {
+      router.replace(`/watch/episode?episode_id=${nextEpisode.episodeId}`);
+    }
+  };
+
+  if (!mediaType) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black">
+        <p className="text-red-400">No media specified.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black">
+      {isLoading && (
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-slate-700 border-t-white" />
+      )}
+
+      {!isLoading && (error || !playback) && (
+        <p className="text-red-400">Failed to load playback info.</p>
+      )}
+
+      {!isLoading && playback && videoSrc && (
+        <CustomVideoPlayer
+          ref={videoRef}
+          src={videoSrc}
+          mediaUrlRoot={MEDIA_URL_ROOT}
+          mediaType={mediaType}
+          title={
+            mediaType === "MOVIE"
+              ? (moviePlayback?.title ?? "")
+              : (episodePlayback?.showTitle ?? "")
+          }
+          episodeTitle={episodePlayback?.title}
+          episodeNumber={episodePlayback?.episodeNumber}
+          seasonNumber={episodePlayback?.seasonNumber}
+          overview={
+            mediaType === "MOVIE"
+              ? moviePlayback?.overview
+              : episodePlayback?.overview
+          }
+          subtitles={playback.subtitles}
+          resumeSeconds={resumeSeconds}
+          resumeMinSeconds={RESUME_MIN_SECONDS}
+          nextEpisode={nextEpisode}
+          onClose={() => router.back()}
+          onPlayNext={handlePlayNext}
+          onPlayingChange={setIsPlaying}
+        />
+      )}
+    </div>
+  );
+}
+
+

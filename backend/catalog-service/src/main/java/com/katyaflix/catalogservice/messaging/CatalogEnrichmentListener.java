@@ -31,7 +31,7 @@ public class CatalogEnrichmentListener {
     )
     public void onMediaEnrichment(CatalogEventDtos.MediaFileEnrichmentEvent event) {
         CatalogEventDtos.MediaCatalogEnrichmentEvent result;
-        System.out.println("recieved enrichment request!");
+//        System.out.println("recieved enrichment request!");
         try {
             CatalogEventDtos.MediaFileEnrichmentDto mediaFile = event.mediaFile();
             if(mediaFile.movieId() != null) {
@@ -40,15 +40,15 @@ public class CatalogEnrichmentListener {
                 upsertService.upsertEpisodeMediaFile(mediaFile);
             }
 
-            System.out.println("recieved enrichment request! --- SUCCESS");
+//            System.out.println("recieved enrichment request! --- SUCCESS");
             result = new CatalogEventDtos.MediaCatalogEnrichmentEvent(event.fileUploadId(), Instant.now(), CatalogUpdateStatus.SUCCESS, "Successfully added media file enrichment.");
         } catch (Exception e) {
-            System.out.println("recieved enrichment request! --- FAIL");
+//            System.out.println("recieved enrichment request! --- FAIL");
             log.warn("Rejected media enrichment event fileUploadId={}: {}",   event.fileUploadId(), e.getMessage());
             result = new CatalogEventDtos.MediaCatalogEnrichmentEvent(event.fileUploadId(), Instant.now(), CatalogUpdateStatus.FAILURE, e.getMessage());
         }
 
-        System.out.println("sending validation completed event");
+//        System.out.println("sending validation completed event");
         kafkaTemplate.send(CatalogTopics.MEDIA_ENRICHMENT_COMPLETED, event.fileUploadId().toString(), result);
     }
 }

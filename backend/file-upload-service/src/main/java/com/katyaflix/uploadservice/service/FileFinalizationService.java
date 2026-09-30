@@ -4,6 +4,7 @@ import com.katyaflix.uploadservice.dto.CatalogEventDtos;
 import com.katyaflix.uploadservice.dto.FileUploadMetadata;
 import com.katyaflix.uploadservice.entity.UploadJob;
 import com.katyaflix.uploadservice.messaging.CatalogTopics;
+import com.katyaflix.uploadservice.util.SubtitleNaming;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -86,6 +88,15 @@ public class FileFinalizationService {
 
         moveMediaFile( tempMovieFile, finalMovieDir,camelCaseTitle);
 
+        // finalize subtitles (uploaded alongside the video, saved into a
+        // "subtitles" subdirectory so they don't confuse findSingleMediaFile)
+
+        Path tempSubtitleDir = tempMovieDir.resolve("subtitles");
+        Path finalSubtitleDir = finalMovieDir.resolve("subtitles");
+
+        List<CatalogEventDtos.SubtitleFinalizedDto> subtitles =
+                finalizeSubtitles(tempSubtitleDir, finalSubtitleDir, movieId, null);
+
         // finalize assets
 
         Path finalPosterPath = finalMovieAssetsDir.resolve("poster.jpg");
@@ -112,15 +123,16 @@ public class FileFinalizationService {
         }
 
         CatalogEventDtos.CatalogPathUpdateDto pathUpdates =
-            new CatalogEventDtos.CatalogPathUpdateDto(
-                    mediaFilePaths,
-                    Map.of(), // episodeStillPaths
-                    Map.of(), // seasonPosterPaths
-                    Map.of(), // showPosterPaths
-                    Map.of(), // showBackdropPaths
-                    moviePosterPaths,
-                    movieBackdropPaths
-            );
+                new CatalogEventDtos.CatalogPathUpdateDto(
+                        mediaFilePaths,
+                        Map.of(), // episodeStillPaths
+                        Map.of(), // seasonPosterPaths
+                        Map.of(), // showPosterPaths
+                        Map.of(), // showBackdropPaths
+                        moviePosterPaths,
+                        movieBackdropPaths,
+                        subtitles
+                );
 
         sendPathUpdateEvent(job.getId(), pathUpdates);
 
@@ -129,7 +141,7 @@ public class FileFinalizationService {
         cleanupDirectory(tempAssetDir);
         cleanupDirectory(tempMovieDir);
 
-        log.info("Finalized movie upload. job={}, tmdbId={}, catalogId={}", job.getId(), tmdbId, movieId);
+        log.info("Finalized movie upload. job={}, tmdbId={}, catalogId={}, subtitles={}", job.getId(), tmdbId, movieId, subtitles.size());
     }
 
 
@@ -160,6 +172,7 @@ public class FileFinalizationService {
         Map<UUID, String> seasonPosterPaths = new HashMap<>();
         Map<UUID, String> showPosterPaths = new HashMap<>();
         Map<UUID, String> showBackdropPaths = new HashMap<>();
+        List<CatalogEventDtos.SubtitleFinalizedDto> subtitles = new ArrayList<>();
 
         //show assets
 
@@ -182,7 +195,7 @@ public class FileFinalizationService {
         //seasons and episodes
 
         for (FileUploadMetadata.SeasonUploadMetadataDto season : show.seasons()) {
-            finalizeSeason(season, tempShowDir, tempAssetDir, finalShowDir, finalShowAssetsDir, mediaFilePaths, episodeStillPaths, seasonPosterPaths);
+            finalizeSeason(season, tempShowDir, tempAssetDir, finalShowDir, finalShowAssetsDir, mediaFilePaths, episodeStillPaths, seasonPosterPaths, subtitles);
         }
 
         // build and send path updates
@@ -194,7 +207,8 @@ public class FileFinalizationService {
                         showPosterPaths,
                         showBackdropPaths,
                         Map.of(), // moviePosterPaths
-                        Map.of()  // movieBackdropPaths
+                        Map.of(),  // movieBackdropPaths
+                        subtitles
                 );
 
         sendPathUpdateEvent(job.getId(), pathUpdates);
@@ -203,7 +217,7 @@ public class FileFinalizationService {
         cleanupDirectory(tempAssetDir);
         cleanupDirectory(tempShowDir);
 
-        log.info("Finalized show upload. job={}, tmdbId={}, catalogId={}", job.getId(), showTmdbId, showId);
+        log.info("Finalized show upload. job={}, tmdbId={}, catalogId={}, subtitles={}", job.getId(), showTmdbId, showId, subtitles.size());
     }
 
 
@@ -215,7 +229,8 @@ public class FileFinalizationService {
             Path finalShowAssetsDir,
             Map<UUID, String> mediaFilePaths,
             Map<UUID, String> episodeStillPaths,
-            Map<UUID, String> seasonPosterPaths
+            Map<UUID, String> seasonPosterPaths,
+            List<CatalogEventDtos.SubtitleFinalizedDto> subtitles
     ) throws IOException {
 
         UUID seasonId = season.id();
@@ -249,7 +264,8 @@ public class FileFinalizationService {
                     finalSeasonAssetsDir,
                     seasonTmdbId,
                     mediaFilePaths,
-                    episodeStillPaths
+                    episodeStillPaths,
+                    subtitles
             );
         }
     }
@@ -263,7 +279,8 @@ public class FileFinalizationService {
             Path finalSeasonAssetsDir,
             long seasonTmdbId,
             Map<UUID, String> mediaFilePaths,
-            Map<UUID, String> episodeStillPaths
+            Map<UUID, String> episodeStillPaths,
+            List<CatalogEventDtos.SubtitleFinalizedDto> subtitles
     ) throws IOException {
 
         UUID episodeId = episode.id();
@@ -304,6 +321,68 @@ public class FileFinalizationService {
         moveMediaFile(mediaFile, finalEpisodeDir, episodeId.toString());
 
         mediaFilePaths.put(episodeId, toRelativePath(finalMediaPath));
+
+        // episode subtitles
+
+        Path tempSubtitleDir = tempEpisodeDir.resolve("subtitles");
+        Path finalSubtitleDir = finalEpisodeDir.resolve("subtitles");
+
+        subtitles.addAll(finalizeSubtitles(tempSubtitleDir, finalSubtitleDir, null, episodeId));
+    }
+
+
+    /**
+     * Moves every regular file sitting in tempSubtitleDir (already converted
+     * to .vtt by FileEncodingService#encodeSubtitle) into finalSubtitleDir,
+     * renaming it to a random UUID filename, and returns a DTO per file
+     * describing where it ended up so catalog-service can create the
+     * corresponding Subtitle row. Safe to call when tempSubtitleDir doesn't
+     * exist (i.e. no subtitles were uploaded) - returns an empty list.
+     */
+    private List<CatalogEventDtos.SubtitleFinalizedDto> finalizeSubtitles(
+            Path tempSubtitleDir,
+            Path finalSubtitleDir,
+            UUID movieId,
+            UUID episodeId
+    ) throws IOException {
+
+        if (!Files.exists(tempSubtitleDir)) {
+            return List.of();
+        }
+
+        List<CatalogEventDtos.SubtitleFinalizedDto> results = new ArrayList<>();
+
+        try (var stream = Files.list(tempSubtitleDir)) {
+            List<Path> subtitleFiles = stream.filter(Files::isRegularFile).toList();
+
+            for (Path source : subtitleFiles) {
+                String originalFilename = source.getFileName().toString();
+                SubtitleNaming.SubtitleNameInfo info = SubtitleNaming.parse(originalFilename);
+
+                String finalFilename = UUID.randomUUID() + ".vtt";
+                Path destination = finalSubtitleDir.resolve(finalFilename);
+
+                move(source, destination);
+
+                results.add(new CatalogEventDtos.SubtitleFinalizedDto(
+                        movieId,
+                        episodeId,
+                        toRelativePath(destination),
+                        info.languageCode(),
+                        info.label(),
+                        "vtt",
+                        info.forced(),
+                        info.sdh(),
+                        // standalone sidecar file uploaded by the user, not
+                        // extracted from the video container
+                        "external"
+                ));
+            }
+        }
+
+        cleanupDirectory(tempSubtitleDir);
+
+        return results;
     }
 
 
@@ -355,6 +434,9 @@ public class FileFinalizationService {
         }
 
         try (var stream = Files.list(directory)) {
+            // note: this only lists REGULAR files, so the "subtitles"
+            // subdirectory created alongside the video file is naturally
+            // skipped here and never confused for a second media file.
             var files = stream.filter(Files::isRegularFile).toList();
 
             if (files.isEmpty()) {

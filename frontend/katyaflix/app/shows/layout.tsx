@@ -1,6 +1,6 @@
 import { ReactNode } from "react";
 
-export default function ShowsLayout({
+export default function MyListLayout({
   children,
   modal,
 }: {

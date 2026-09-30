@@ -7,6 +7,8 @@ import org.springframework.data.domain.Persistable;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -90,4 +92,9 @@ public class Movie implements Persistable<UUID> {
     void onUpdate() {
         updatedAt = Instant.now();
     }
+
+
+    @OneToMany(mappedBy = "movie",fetch = FetchType.LAZY, cascade = CascadeType.ALL,orphanRemoval = true)
+    @Builder.Default
+    private List<GenreToMedia> genres = new ArrayList<>();
 }

@@ -35,6 +35,37 @@ export default function MovieDetail({ movieId }: MovieDetailProps) {
       )}
     </div>
   );
+  if (isLoading) {
+    return (
+      <DetailPage
+        isLoading={true}
+        title={null}
+        backdropPath={null}
+        subtitle={undefined}
+        overview={null}
+        genres={null}
+        error={null}
+        type="MOVIE"
+        id={"null_id"}
+      />
+    );
+  }
+
+  if (error || !movie) {
+    return (
+      <DetailPage
+        isLoading={false}
+        error={error}
+        title={null}
+        backdropPath={null}
+        subtitle={undefined}
+        overview={null}
+        genres={null}
+        type="MOVIE"
+        id={"null_id"}
+      />
+    );
+  }
 
   return (
     movie && (
@@ -45,6 +76,7 @@ export default function MovieDetail({ movieId }: MovieDetailProps) {
         isLoading={isLoading}
         error={error}
         overview={movie.overview}
+        genres={movie.genres}
         id={movie.id}
         type="MOVIE"
       ></DetailPage>
