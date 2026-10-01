@@ -6,10 +6,9 @@ import DetailPage from "../media/DetailPage";
 import SeasonEpisodesSection from "./SeasonEpisodesSection";
 type ShowDetailProps = {
   showId: string;
-  modal?: boolean;
 };
 
-export default function ShowDetail({ showId, modal = false }: ShowDetailProps) {
+export default function ShowDetail({ showId }: ShowDetailProps) {
   const { data: show, isLoading, error } = useShowDetail(showId);
   const { user } = useUser();
   if (isLoading) {

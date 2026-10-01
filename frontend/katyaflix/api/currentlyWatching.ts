@@ -14,8 +14,6 @@ export async function fetchCurrentlyWatching(
   return res.json();
 }
 
-// Exported (not just used internally) so usePlayback can reuse it without
-// duplicating the fetch.
 export async function fetchCurrentEpisode(
   userId: string,
   showId: string,
@@ -25,5 +23,14 @@ export async function fetchCurrentEpisode(
   );
   if (res.status === 404) return null; // nothing started for this show yet
   if (!res.ok) throw new Error("Failed to load current episode");
+  return res.json();
+}
+
+export async function fetchFirstEpisode(
+  showId: string,
+): Promise<CurrentEpisode | null> {
+  const res = await fetch(`${API_URL_ROOT}/shows/${showId}/first-episode`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("Failed to load first episode");
   return res.json();
 }

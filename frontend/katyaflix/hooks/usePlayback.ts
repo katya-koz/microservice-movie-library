@@ -1,6 +1,9 @@
 "use client";
 
-import { fetchCurrentEpisode } from "@/api/currentlyWatching";
+import {
+  fetchCurrentEpisode,
+  fetchFirstEpisode,
+} from "@/api/currentlyWatching";
 import {
   fetchMoviePlayback,
   fetchEpisodePlayback,
@@ -61,12 +64,13 @@ async function resolveShowPlaybackTarget(
   userId: string,
   showId: string,
 ): Promise<string | null> {
-  const current = await fetchCurrentEpisode(userId, showId);
+  let current = await fetchCurrentEpisode(userId, showId);
 
-  // No watch history for this show yet. TODO: fall back to starting
-  // season 1 episode 1 (needs the catalog EpisodeDetail's id field +
-  // confirmation of whether season numbering starts at 0 or 1).
-  if (!current) return null;
+  if (!current) {
+    current = await fetchFirstEpisode(showId);
+  }
+
+  if (!current) return null; // this shouldnt really ever happen
 
   const progress =
     current.durationSeconds > 0
@@ -78,8 +82,6 @@ async function resolveShowPlaybackTarget(
     if (next) {
       return buildEpisodeWatchUrl(next.showId, next.seasonId, next.episodeId);
     }
-    // Last episode of the show — nothing to advance to, fall through and
-    // replay/resume the current one instead.
   }
 
   return buildEpisodeWatchUrl(

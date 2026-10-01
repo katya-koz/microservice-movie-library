@@ -488,7 +488,6 @@ export const CustomVideoPlayer = forwardRef<
         ))}
       </video>
 
-      {/* Top gradient + close button */}
       <div
         className={`pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300 ${
           showControls ? "opacity-100" : "opacity-0"
@@ -504,7 +503,6 @@ export const CustomVideoPlayer = forwardRef<
         <ArrowReturnLeft />
       </button>
 
-      {/* Idle metadata overlay — paused + 10s of no activity */}
       <div
         className={`pointer-events-none absolute inset-x-0 bottom-28 z-10 px-6 transition-all duration-500 md:bottom-32 md:px-16 ${
           showIdleInfo ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
@@ -532,7 +530,6 @@ export const CustomVideoPlayer = forwardRef<
         </div>
       </div>
 
-      {/* Bottom gradient + controls */}
       <div
         className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-6 pb-5 pt-20 transition-opacity duration-300 md:px-10 ${
           showControls ? "opacity-100" : "pointer-events-none opacity-0"
