@@ -101,50 +101,42 @@ public class CatalogValidationListener {
 
 
     private CatalogShowUploadEvent toShowResult(
-            CatalogUpsertService.UpsertedShow upsertedShow,
+            CatalogUpsertService.UpsertedShow upserted,
             ShowCatalogValidationEvent event
     ) {
+        Show show = upserted.show();
         FileUploadMetadata.ShowUploadMetadataDto original = event.metadata();
-        Show show = upsertedShow.show();
-        List<FileUploadMetadata.SeasonUploadMetadataDto> seasonResults = original.seasons().stream() .map(inputSeason -> {
-                    Season season = show.getSeasons().stream()
-                            .filter(s -> Objects.equals(
-                                    s.getTmdbId(),
-                                    inputSeason.tmdbId()
-                            ))
+
+        List<FileUploadMetadata.SeasonUploadMetadataDto> seasonResults = original.seasons().stream()
+                .map(inputSeason -> {
+                    CatalogUpsertService.UpsertedSeason upsertedSeason = upserted.seasons().stream()
+                            .filter(s -> Objects.equals(s.season().getTmdbId(), inputSeason.tmdbId()))
                             .findFirst()
                             .orElseThrow();
+                    Season season = upsertedSeason.season();
 
-                    List<FileUploadMetadata.EpisodeUploadMetadataDto> episodeResults =
-                            inputSeason.episodes().stream()
-                                    .map(inputEpisode -> {
+                    List<FileUploadMetadata.EpisodeUploadMetadataDto> episodeResults = inputSeason.episodes().stream()
+                            .map(inputEpisode -> {
+                                Episode episode = upsertedSeason.episodes().stream()
+                                        .filter(e -> Objects.equals(e.getTmdbId(), inputEpisode.tmdbId()))
+                                        .findFirst()
+                                        .orElseThrow();
 
-                                        Episode episode =
-                                                season.getEpisodes().stream()
-                                                        .filter(e -> Objects.equals(
-                                                                e.getTmdbId(),
-                                                                inputEpisode.tmdbId()
-                                                        ))
-                                                        .findFirst()
-                                                        .orElseThrow();
-
-                                        return new FileUploadMetadata.EpisodeUploadMetadataDto(
-                                                episode.getTmdbId(),
-                                                episode.getId(),
-                                                episode.getTitle(),
-                                                episode.getAirDate(),
-                                                episode.getOverview(),
-                                                "",
-                                                episode.getRuntimeMinutes(),
-                                                episode.getEpisodeNumber(),
-                                                episode.getStillPath(),
-
-                                                // IMPORTANT:
-                                                // files came from the upload event
-                                                inputEpisode.files()
-                                        );
-                                    })
-                                    .toList();
+                                return new FileUploadMetadata.EpisodeUploadMetadataDto(
+                                        episode.getTmdbId(),
+                                        episode.getId(),
+                                        episode.getTitle(),
+                                        episode.getAirDate(),
+                                        episode.getOverview(),
+                                        "",
+                                        episode.getRuntimeMinutes(),
+                                        episode.getEpisodeNumber(),
+                                        episode.getStillPath(),
+                                        // files came from the upload event
+                                        inputEpisode.files()
+                                );
+                            })
+                            .toList();
 
                     return new FileUploadMetadata.SeasonUploadMetadataDto(
                             season.getTmdbId(),
@@ -183,7 +175,6 @@ public class CatalogValidationListener {
                 event.fileUploadId()
         );
     }
-
     private CatalogMovieUploadEvent failedMovie(MovieCatalogValidationEvent event, String message) {
         return new CatalogMovieUploadEvent(event.metadata(), CatalogUpdateStatus.FAILURE, message, null, event.fileUploadId());
     }
