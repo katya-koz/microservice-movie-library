@@ -89,6 +89,9 @@ public class UploadService {
         return jobRepository.save(job);
     }
 
+    private Path jobTempRoot(UUID jobId) {
+        return tempMediaRoot.resolve("jobs").resolve(jobId.toString());
+    }
 
     public void finalizeFileUpload(UploadJob job) {
         if (!Boolean.TRUE.equals(job.getCatalogValidationStatus()) || !Boolean.TRUE.equals(job.getFileUploadStatus())) {
@@ -134,7 +137,8 @@ public class UploadService {
              *
              * temp/movies/{tmdbId}/{filename}
              */
-            Path movieMediaDir = tempMediaRoot.resolve("movies").resolve( String.valueOf(metadata.tmdbId()));
+//            Path movieMediaDir = tempMediaRoot.resolve("movies").resolve( String.valueOf(metadata.tmdbId()));
+            Path movieMediaDir = jobTempRoot(job.getId()).resolve("movies").resolve(String.valueOf(metadata.tmdbId()));
 
             SavedFiles saved = saveMovieFiles(metadata, fileMap, movieMediaDir, job);
 
@@ -164,9 +168,8 @@ public class UploadService {
              *
              * temp/shows/{showTmdbId}/...
              */
-            Path showMediaDir = tempMediaRoot.resolve("shows").resolve(
-                    String.valueOf(metadata.tmdbId()));
-
+//            Path showMediaDir = tempMediaRoot.resolve("shows").resolve( String.valueOf(metadata.tmdbId()));
+            Path showMediaDir = jobTempRoot(job.getId()).resolve("shows").resolve(String.valueOf(metadata.tmdbId()));
 
 
             jobRepository.updateStatusWhereId(job.getId(), UploadJob.UploadStatus.SAVING_ASSETS,Instant.now());
@@ -284,8 +287,8 @@ public class UploadService {
          *
          * temp/assets/movies/{movieTmdbId}/
          */
-        Path assetDir = tempMediaRoot.resolve("assets").resolve("movies").resolve(  String.valueOf(metadata.tmdbId()));
-
+//        Path assetDir = tempMediaRoot.resolve("assets").resolve("movies").resolve(  String.valueOf(metadata.tmdbId()));
+        Path assetDir = jobTempRoot(job.getId()).resolve("assets").resolve("movies").resolve(String.valueOf(metadata.tmdbId()));
         Files.createDirectories(assetDir);
 
         tmdbImageService.download( metadata.posterPath(), assetDir.resolve("poster.jpg"), tempMediaRoot);
@@ -342,9 +345,8 @@ public class UploadService {
          *
          * temp/assets/shows/{showTmdbId}/
          */
-        Path showAssetDir =
-                tempMediaRoot.resolve("assets").resolve("shows").resolve(String.valueOf(metadata.tmdbId()));
-
+//        Path showAssetDir = tempMediaRoot.resolve("assets").resolve("shows").resolve(String.valueOf(metadata.tmdbId()));
+        Path showAssetDir = jobTempRoot(job.getId()).resolve("assets").resolve("shows").resolve(String.valueOf(metadata.tmdbId()));
         Files.createDirectories(showAssetDir);
 
         tmdbImageService.download(metadata.posterPath(),showAssetDir.resolve("poster.jpg"), tempMediaRoot);

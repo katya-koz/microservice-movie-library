@@ -1,6 +1,5 @@
 package com.katyaflix.catalogservice.messaging;
 
-import com.katyaflix.catalogservice.dto.CatalogEventDtos;
 import com.katyaflix.catalogservice.dto.CatalogEventDtos.CatalogMovieUploadEvent;
 import com.katyaflix.catalogservice.dto.CatalogEventDtos.CatalogShowUploadEvent;
 import com.katyaflix.catalogservice.dto.CatalogEventDtos.CatalogUpdateStatus;
@@ -18,11 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.time.Instant;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -82,7 +77,6 @@ public class CatalogValidationListener {
         kafkaTemplate.send(CatalogTopics.MOVIE_VALIDATION_COMPLETED, event.fileUploadId().toString(), result);
     }
 
-    @Transactional
     @KafkaListener(
             topics = CatalogTopics.SHOW_VALIDATION_REQUESTED,
             groupId = "catalog-service",

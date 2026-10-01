@@ -16,6 +16,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -56,7 +57,9 @@ public class FileFinalizationService {
             Files.createDirectories(p);
         }
     }
-
+    private Path jobTempRoot(UploadJob job) {
+        return tempMediaRoot.resolve("jobs").resolve(job.getId().toString());
+    }
     public void finalizeMovie( UploadJob job
     ) throws IOException {
 
@@ -67,12 +70,15 @@ public class FileFinalizationService {
         long tmdbId = movie.tmdbId();
 
         String camelCaseTitle = Arrays.stream(title.split("[^a-zA-Z0-9]+")).filter(s -> !s.isEmpty()).map(s -> Character.toUpperCase(s.charAt(0))+ s.substring(1).toLowerCase()).collect(Collectors.joining());
+        Path jobRoot = jobTempRoot(job);
+        Path tempMovieDir = jobRoot.resolve("movies").resolve(String.valueOf(tmdbId));
+        Path tempAssetDir = jobRoot.resolve("assets").resolve("movies").resolve(String.valueOf(tmdbId));
 
-        Path tempMovieDir = tempMediaRoot.resolve("movies").resolve(String.valueOf(tmdbId));
+//        Path tempMovieDir = tempMediaRoot.resolve("movies").resolve(String.valueOf(tmdbId));
 
         Path tempMovieFile = findSingleMediaFile(tempMovieDir);
 
-        Path tempAssetDir = tempMediaRoot.resolve("assets").resolve("movies").resolve(String.valueOf(tmdbId));
+//        Path tempAssetDir = tempMediaRoot.resolve("assets").resolve("movies").resolve(String.valueOf(tmdbId));
 
         Path finalMovieDir = mediaRoot.resolve("media").resolve("movies").resolve(movieId.toString());
 
@@ -98,12 +104,11 @@ public class FileFinalizationService {
         // finalize assets
 
         Path finalPosterPath = finalMovieAssetsDir.resolve("poster.jpg");
-
         Path finalBackdropPath = finalMovieAssetsDir.resolve("backdrop.jpg");
-
         boolean posterMoved = moveIfExists(tempAssetDir.resolve("poster.jpg"), finalPosterPath);
-
         boolean backdropMoved = moveIfExists(tempAssetDir.resolve("backdrop.jpg"), finalBackdropPath);
+
+
 
         // build path updated event (update catalog)
 
@@ -138,7 +143,7 @@ public class FileFinalizationService {
 
         cleanupDirectory(tempAssetDir);
         cleanupDirectory(tempMovieDir);
-
+        cleanupDirectory(jobRoot);
         log.info("Finalized movie upload. job={}, tmdbId={}, catalogId={}, subtitles={}", job.getId(), tmdbId, movieId, subtitles.size());
     }
 
@@ -151,10 +156,11 @@ public class FileFinalizationService {
 
         UUID showId = show.id();
         long showTmdbId = show.tmdbId();
-
-        Path tempShowDir = tempMediaRoot.resolve("shows").resolve(String.valueOf(showTmdbId));
-
-        Path tempAssetDir = tempMediaRoot.resolve("assets").resolve("shows").resolve(String.valueOf(showTmdbId));
+        Path jobRoot = jobTempRoot(job);
+        Path tempShowDir = jobRoot.resolve("shows").resolve(String.valueOf(showTmdbId));
+        Path tempAssetDir = jobRoot.resolve("assets").resolve("shows").resolve(String.valueOf(showTmdbId));
+//        Path tempShowDir = tempMediaRoot.resolve("shows").resolve(String.valueOf(showTmdbId));
+//        Path tempAssetDir = tempMediaRoot.resolve("assets").resolve("shows").resolve(String.valueOf(showTmdbId));
 
         Path finalShowDir = mediaRoot.resolve("media").resolve("shows").resolve(showId.toString());
 
@@ -214,6 +220,7 @@ public class FileFinalizationService {
         //cleanup
         cleanupDirectory(tempAssetDir);
         cleanupDirectory(tempShowDir);
+        cleanupDirectory(jobRoot);
 
         log.info("Finalized show upload. job={}, tmdbId={}, catalogId={}, subtitles={}", job.getId(), showTmdbId, showId, subtitles.size());
     }
@@ -419,7 +426,7 @@ public class FileFinalizationService {
         Files.createDirectories(destination.getParent());
 
         try {
-            Files.move(source, destination, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            Files.move(source, destination, java.nio.file.StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (java.nio.file.AtomicMoveNotSupportedException e) {
             Files.move(source, destination);
         }
