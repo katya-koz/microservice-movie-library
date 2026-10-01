@@ -51,9 +51,23 @@ public class CurrentlyWatchingService {
         return currentlyWatching;
     }
     public EpisodeDto getCurrentEpisode(UUID userId, UUID showId) {
-        Watchtime recentWatchtime = watchtimeRepository.findFirstByUserAndShowIdOrderByUpdatedAtDesc(getUser(userId), showId);
+        Watchtime recentWatchtime =
+                watchtimeRepository.findFirstByUserAndShowIdOrderByUpdatedAtDesc(
+                        getUser(userId),
+                        showId
+                );
 
-        return new EpisodeDto(recentWatchtime.getEpisodeId(), recentWatchtime.getSeasonId(), recentWatchtime.getShowId(), recentWatchtime.getWatchtimeSeconds(), recentWatchtime.getDurationSeconds());
+        if (recentWatchtime == null) {
+            return null;
+        }
+
+        return new EpisodeDto(
+                recentWatchtime.getEpisodeId(),
+                recentWatchtime.getSeasonId(),
+                recentWatchtime.getShowId(),
+                recentWatchtime.getWatchtimeSeconds(),
+                recentWatchtime.getDurationSeconds()
+        );
     }
     private User getUser(UUID userId) {
         return userRepository.findById(userId)
