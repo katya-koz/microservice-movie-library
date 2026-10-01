@@ -75,7 +75,7 @@ public class Season implements Persistable<UUID> {
     }
 
 
-    @OneToMany(mappedBy = "season", fetch = FetchType.LAZY, cascade = CascadeType.ALL,  orphanRemoval = true )
+    @OneToMany(mappedBy = "season", fetch = FetchType.LAZY, cascade = CascadeType.ALL)
     @Builder.Default
     private List<Episode> episodes = new ArrayList<>();
 }

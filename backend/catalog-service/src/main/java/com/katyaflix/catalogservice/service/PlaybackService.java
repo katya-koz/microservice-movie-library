@@ -43,13 +43,6 @@ public class PlaybackService {
         return toPlaybackInfo(file);
     }
 
-    /**
-     * same season, next episode number.
-     *
-     * if this was the last episode of the season roll over to episode 1 of the next season
-     *
-     * if this was the last episode of the show entirely - theres nothing to autoplay next
-     */
     public NextEpisode getNext(UUID currentEpisodeId) {
         Episode current = episodeRepository.findByIdWithSeasonAndShow(currentEpisodeId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,"Episode not found"));
         Season currentSeason = current.getSeason();

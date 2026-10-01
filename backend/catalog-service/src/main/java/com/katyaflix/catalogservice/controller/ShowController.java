@@ -4,6 +4,7 @@ import com.katyaflix.catalogservice.dto.CatalogDtos;
 import com.katyaflix.catalogservice.dto.CatalogDtos.EpisodeDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowSummary;
+import com.katyaflix.catalogservice.dto.EpisodeDto;
 import com.katyaflix.catalogservice.service.ShowService;
 
 import lombok.RequiredArgsConstructor;
@@ -44,8 +45,6 @@ public class ShowController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Show not found"));
     }
 
-
-
     // GET /api/shows/{showId}/seasons/{seasonNumber}/episodes
     @GetMapping("/{showId}/seasons/{seasonNumber}/episodes")
     public List<EpisodeDetail> getEpisodes(
@@ -53,5 +52,14 @@ public class ShowController {
             @PathVariable Integer seasonNumber
     ) {
         return showService.getEpisodesForSeason(showId, seasonNumber);
+    }
+
+
+    // GET /api/shows/{showId}/first-episode
+    @GetMapping("/{showId}/first-episode")
+    public EpisodeDto getFirstEpisode(
+            @PathVariable UUID showId
+    ) {
+        return showService.getFirstEpisode(showId);
     }
 }

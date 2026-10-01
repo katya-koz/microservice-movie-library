@@ -46,4 +46,9 @@ public interface EpisodeRepository extends JpaRepository<Episode, UUID> {
             @Param("id") UUID id,
             @Param("stillPath") String stillPath
     );
+
+
+    Optional<Episode> findFirstBySeasonShowIdOrderBySeasonSeasonNumberAscEpisodeNumberAsc(
+            UUID showId
+    );
 }

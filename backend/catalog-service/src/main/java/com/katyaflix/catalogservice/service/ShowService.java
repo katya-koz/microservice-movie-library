@@ -5,6 +5,7 @@ import com.katyaflix.catalogservice.dto.CatalogDtos.EpisodeDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.SeasonSummary;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowSummary;
+import com.katyaflix.catalogservice.dto.EpisodeDto;
 import com.katyaflix.catalogservice.entity.*;
 import com.katyaflix.catalogservice.repository.*;
 
@@ -15,6 +16,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
+
+import javax.swing.text.html.Option;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -52,6 +55,25 @@ public class ShowService {
 
         return episodeRepository.findBySeasonIdOrderByEpisodeNumberAsc(season.getId()).stream().map(e -> toEpisodeDetail(e, seasonNumber)).toList();
     }
+
+    public EpisodeDto getFirstEpisode(UUID showId) {
+        Optional<Episode> ep = episodeRepository.findFirstBySeasonShowIdOrderBySeasonSeasonNumberAscEpisodeNumberAsc(showId);
+
+        if (ep.isPresent()) {
+            Episode episode = ep.get();
+
+            return new EpisodeDto(
+                    episode.getId(),
+                    episode.getSeason().getId(),
+                    episode.getSeason().getShow().getId(),
+                    episode.getSeason().getSeasonNumber(),
+                    episode.getEpisodeNumber()
+            );
+        }
+
+        return null;
+    }
+
     public List<CatalogDtos.ShowSummary> getSummaries(List<UUID> ids) {
         return showRepository.findByIdIn(ids).stream().map(p -> new CatalogDtos.ShowSummary(p.getId(), p.getTitle(),mediaUrlRoot + p.getPosterPath())).toList();
     }

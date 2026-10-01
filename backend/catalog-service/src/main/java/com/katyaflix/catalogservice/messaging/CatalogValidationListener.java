@@ -85,8 +85,8 @@ public class CatalogValidationListener {
         CatalogShowUploadEvent result;
         try {
             FileUploadMetadata.ShowUploadMetadataDto metadata = event.metadata();
-            Show show = upsertService.upsertShow(metadata);
-            result = toShowResult(show, event);
+            CatalogUpsertService.UpsertedShow upserted = upsertService.upsertShow(metadata);
+            result = toShowResult(upserted, event);
         } catch (CatalogValidationException e) {
             log.warn("Rejected show validation event tmdbId={} fileUploadId={}: {}", event.metadata().tmdbId(), event.fileUploadId(), e.getMessage());
             result = failedShow(event, e.getMessage());
@@ -101,11 +101,11 @@ public class CatalogValidationListener {
 
 
     private CatalogShowUploadEvent toShowResult(
-            Show show,
+            CatalogUpsertService.UpsertedShow upsertedShow,
             ShowCatalogValidationEvent event
     ) {
         FileUploadMetadata.ShowUploadMetadataDto original = event.metadata();
-
+        Show show = upsertedShow.show();
         List<FileUploadMetadata.SeasonUploadMetadataDto> seasonResults = original.seasons().stream() .map(inputSeason -> {
                     Season season = show.getSeasons().stream()
                             .filter(s -> Objects.equals(

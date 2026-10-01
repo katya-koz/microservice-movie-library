@@ -179,8 +179,6 @@ public class CatalogUpsertService {
             UUID key = mediaFile.getKey();
             String path = mediaFile.getValue();
 
-            System.out.println("mediafile: " + key + " " + path );
-
             mediaFileRepository.updateFilePathByMovieOrEpisodeId(key, path);
         }
 
@@ -232,15 +230,14 @@ public class CatalogUpsertService {
         }
 
     }
+    public record UpsertedShow(Show show, List<UpsertedSeason> seasons) {}
+    public record UpsertedSeason(Season season, List<Episode> episodes) {}
+
     @Transactional
-    public Show upsertShow(FileUploadMetadata.ShowUploadMetadataDto metadata) {
+    public UpsertedShow upsertShow(FileUploadMetadata.ShowUploadMetadataDto metadata) {
         validateShow(metadata);
 
-        Show show = findOrCreate(
-                showRepository::findByTmdbId,
-                Show::new,
-                metadata.tmdbId()
-        );
+        Show show = findOrCreate(showRepository::findByTmdbId, Show::new, metadata.tmdbId());
         show.setTmdbId(metadata.tmdbId());
         show.setTitle(metadata.title());
         show.setFirstAirDate(metadata.firstAirDate());
@@ -252,25 +249,15 @@ public class CatalogUpsertService {
         syncGenres(show, metadata.genres());
         show = saveWithRaceRetry(showRepository, show, showRepository::findByTmdbId, metadata.tmdbId());
 
-
-        // collect the actual persisted Season entities instead of relying on show.getSeasons()
-        List<Season> seasons = new ArrayList<>(metadata.seasons().size());
+        List<UpsertedSeason> seasons = new ArrayList<>();
         for (FileUploadMetadata.SeasonUploadMetadataDto seasonDto : metadata.seasons()) {
             seasons.add(upsertSeason(seasonDto, show));
         }
-        // sync the inmemory association so callers (and toShowResult) see the current state
-        show.getSeasons().clear();
-        show.getSeasons().addAll(seasons);
-
-        return show;
+        return new UpsertedShow(show, seasons);
     }
 
-    private Season upsertSeason(FileUploadMetadata.SeasonUploadMetadataDto metadata, Show show) {
-        Season season = findOrCreate(
-                seasonRepository::findByTmdbId,
-                Season::new,
-                metadata.tmdbId()
-        );
+    private UpsertedSeason upsertSeason(FileUploadMetadata.SeasonUploadMetadataDto metadata, Show show) {
+        Season season = findOrCreate(seasonRepository::findByTmdbId, Season::new, metadata.tmdbId());
         season.setTmdbId(metadata.tmdbId());
         season.setShow(show);
         season.setSeasonNumber(metadata.seasonNumber());
@@ -278,18 +265,13 @@ public class CatalogUpsertService {
         season.setOverview(metadata.overview());
         season.setAirDate(metadata.airDate());
         season.setTmdbPosterPath(metadata.posterPath());
-
         season = saveWithRaceRetry(seasonRepository, season, seasonRepository::findByTmdbId, metadata.tmdbId());
 
-        // same pattern one level down for episodes
-        List<Episode> episodes = new ArrayList<>(metadata.episodes().size());
+        List<Episode> episodes = new ArrayList<>();
         for (FileUploadMetadata.EpisodeUploadMetadataDto episodeDto : metadata.episodes()) {
             episodes.add(upsertEpisode(episodeDto, season));
         }
-        season.getEpisodes().clear();
-        season.getEpisodes().addAll(episodes);
-
-        return season;
+        return new UpsertedSeason(season, episodes);
     }
 
     private Episode upsertEpisode(FileUploadMetadata.EpisodeUploadMetadataDto metadata, Season season) {
