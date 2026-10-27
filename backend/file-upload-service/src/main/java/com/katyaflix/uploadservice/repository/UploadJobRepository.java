@@ -15,10 +15,5 @@ import java.util.UUID;
 
 public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
 
-    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(
-            UUID userId,
-            Pageable pageable
-    );
-
-    void updateFileUploadStatusWhereId(UUID id, boolean b, Instant now);
+    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 }
