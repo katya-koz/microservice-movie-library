@@ -22,12 +22,19 @@ public class Subtitle {
     private UUID id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "media_file_id", nullable = false)
-    private MediaFile mediaFile;
+    @JoinColumn(name = "episode_id", nullable = true)
+    private Episode episode;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "movie_id", nullable = true)
+    private Movie movie;
 
     // Location of the .vtt sidecar file
     @Column(name = "file_path", nullable = false, unique = true)
     private String filePath;
+
+    @Column(name = "original_file_name", nullable = false, unique = true)
+    private String originalFileName;
 
     @Column(name = "language_code", nullable = false)
     private String languageCode;
@@ -58,6 +65,15 @@ public class Subtitle {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    private void validateExactlyOneOwner() {
+        boolean hasMovie = movie != null;
+        boolean hasEpisode = episode != null;
+        if (hasMovie == hasEpisode) { // both set, or both unset
+            throw new IllegalStateException(
+                    "Subtitle must belong to exactly one of movie or episode");
+        }
+    }
 
     @PrePersist
     void onCreate() {

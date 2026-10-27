@@ -1,9 +1,10 @@
 package com.katyaflix.uploadservice.messaging;
 
 
-import com.katyaflix.uploadservice.dto.CatalogEventDtos;
-import com.katyaflix.uploadservice.dto.FileUploadMetadata.MovieUploadMetadataDto;
-import com.katyaflix.uploadservice.dto.FileUploadMetadata.ShowUploadMetadataDto;
+import com.katyaflix.uploadservice.dto.metadata.MovieMetadata;
+import com.katyaflix.uploadservice.dto.metadata.ShowMetadata;
+import com.katyaflix.uploadservice.dto.validationrequest.MovieCatalogValidationEvent;
+import com.katyaflix.uploadservice.dto.validationrequest.ShowCatalogValidationEvent;
 import com.katyaflix.uploadservice.entity.UploadJob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,18 +24,17 @@ public class CatalogValidationProducer {
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    public void publishMovieValidation(UploadJob job, MovieUploadMetadataDto dto) {
-        CatalogEventDtos.MovieCatalogValidationEvent event = new CatalogEventDtos.MovieCatalogValidationEvent(job.getId(), Instant.now(), dto);
+    public void publishMovieValidation(UploadJob job, MovieMetadata dto) {
+        MovieCatalogValidationEvent event =
+                new MovieCatalogValidationEvent(job.getId(), Instant.now(), dto);
         send(CatalogTopics.MOVIE_VALIDATION_REQUESTED, job, event);
     }
 
-    public void publishShowValidation(UploadJob job, ShowUploadMetadataDto dto) {
-        CatalogEventDtos.ShowCatalogValidationEvent event = new CatalogEventDtos.ShowCatalogValidationEvent(job.getId(), Instant.now(), dto);
+    public void publishShowValidation(UploadJob job, ShowMetadata dto) {
+        ShowCatalogValidationEvent event =
+                new ShowCatalogValidationEvent(job.getId(), Instant.now(), dto);
         send(CatalogTopics.SHOW_VALIDATION_REQUESTED, job, event);
     }
-
-
-
 
 
     private void send(String topic, UploadJob job, Object event) {

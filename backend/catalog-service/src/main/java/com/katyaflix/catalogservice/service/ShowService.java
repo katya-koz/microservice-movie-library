@@ -6,6 +6,8 @@ import com.katyaflix.catalogservice.dto.CatalogDtos.SeasonSummary;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowDetail;
 import com.katyaflix.catalogservice.dto.CatalogDtos.ShowSummary;
 import com.katyaflix.catalogservice.dto.EpisodeDto;
+import com.katyaflix.catalogservice.dto.metadata.SeasonMetadata;
+import com.katyaflix.catalogservice.dto.metadata.ShowMetadata;
 import com.katyaflix.catalogservice.entity.*;
 import com.katyaflix.catalogservice.repository.*;
 
@@ -14,10 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 
-import javax.swing.text.html.Option;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,6 +35,9 @@ public class ShowService {
     private final SeasonRepository seasonRepository;
     private final EpisodeRepository episodeRepository;
     private final MediaFileRepository mediaFileRepository;
+    private final GenreService genreService;
+    private final SeasonService seasonService;
+
 
     public Page<ShowSummary> getCatalogPage(String title, Pageable pageable) {
         Page<ShowRepository.ShowCatalogProjection> shows;
@@ -115,4 +121,42 @@ public class ShowService {
                 e.getAirDate()
         );
     }
+
+
+    // ********* UPSERT / ENRICHMENT
+        @Transactional
+        public Show upsertShow(ShowMetadata metadata) {
+
+            Show show = findOrCreateByTmdbId(metadata.tmdbId());
+            show.setTmdbId(metadata.tmdbId());
+            show.setTitle(metadata.title());
+            show.setFirstAirDate(metadata.firstAirDate());
+            show.setOverview(metadata.overview());
+            show.setCreatorNames(metadata.creatorNames());
+            show.setStatus(metadata.status());
+            show.setTmdbPosterPath(metadata.posterPath());
+            show.setTmdbBackdropPath(metadata.backdropPath());
+            show.setPosterPath("assets/shows/" + show.getId() + "/poster.jpg" );
+            show.setBackdropPath("assets/shows/" + show.getId() + "/backdrop.jpg" );
+            genreService.syncGenres(show, metadata.genres());
+            showRepository.save(show);
+
+            List<Season> seasons = new ArrayList<>();
+            for (SeasonMetadata seasonDto : metadata.seasons()) {
+                seasons.add(seasonService.upsertSeason(seasonDto, show));
+            }
+            return show;
+        }
+
+
+    private Show findOrCreateByTmdbId(long tmdbId) {
+        return showRepository.findByTmdbId(tmdbId).orElseGet(() ->
+        {
+            Show show = new Show();
+            show.setTmdbId(tmdbId);
+            return showRepository.save(show);
+        });
+    }
+
+
 }

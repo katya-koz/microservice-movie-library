@@ -65,6 +65,16 @@ public class GatewayRoute {
 						.filters(f -> f.stripPrefix(1))
 						.uri("http://user-service:8080")
 				)
+
+				// per-file upload status pushes: /api/ws/upload-pipeline/{jobId}?userId=...
+				// -> /ws/upload-pipeline/{jobId} on the upload service (FileStatusWebSocketConfig)
+				.route("upload_pipeline_ws_route", r -> r
+						.path("/api/ws/upload-pipeline/**")
+						.filters(f -> f.stripPrefix(1))
+						.uri("ws://file-upload-service:8080")
+				)
+
+				// job-level status pushes used by the /jobs page
 				.route("upload_job_status_ws_route", r -> r
 						.path("/api/ws/upload-jobs/**")
 						.filters(f -> f.stripPrefix(1))

@@ -1,5 +1,6 @@
 package com.katyaflix.catalogservice.entity;
 
+import com.katyaflix.catalogservice.entity.TmdbEntity;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
@@ -18,7 +19,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class Episode implements Persistable<UUID> {
+public class Episode extends TmdbEntity implements Persistable<UUID> {
 
     @Id
     @GeneratedValue
@@ -35,8 +36,8 @@ public class Episode implements Persistable<UUID> {
     @Column(name = "episode_number", nullable = false)
     private Integer episodeNumber;
 
-    @Column(name = "tmdb_id")
-    private long tmdbId;
+//    @Column(name = "tmdb_id")
+//    private long tmdbId;
 
     @Column(name = "title")
     private String title;

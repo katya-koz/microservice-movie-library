@@ -1,6 +1,8 @@
 package com.katyaflix.uploadservice.service;
 
 import com.katyaflix.uploadservice.dto.*;
+import com.katyaflix.uploadservice.dto.enums.MediaCategory;
+import com.katyaflix.uploadservice.dto.metadata.*;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,35 +37,62 @@ public class TmdbService {
         this.apiKey = apiKey;
     }
 
-    public FileUploadMetadata.UploadMetadataDto populateMedia(FileUploadMetadata.UploadMetadataDto metadata)
-    {
+    public MediaMetadata populateMedia(
+            MediaCategory mediaType,
+            long tmdbId
+    ) {
         requireApiKey();
 
-        if (metadata.type() == FileUploadMetadata.UploadType.SHOW) {
-            return showPopulate((FileUploadMetadata.ShowUploadMetadataDto) metadata);
+        if (mediaType == MediaCategory.SHOW) {
+            return showPopulate(tmdbId);
         }
 
-        return moviePopulate((FileUploadMetadata.MovieUploadMetadataDto) metadata);
+        return moviePopulate(tmdbId);
     }
 
-    private FileUploadMetadata.MovieUploadMetadataDto moviePopulate(FileUploadMetadata.MovieUploadMetadataDto upload)
-    {
-        String url = TMDB_API_BASE + "/movie/" + upload.tmdbId() + "?api_key=" + encode(apiKey) + "&append_to_response=credits";
+
+    private MovieMetadata moviePopulate(long tmdbId) {
+
+        String url = TMDB_API_BASE
+                + "/movie/"
+                + tmdbId
+                + "?api_key="
+                + encode(apiKey)
+                + "&append_to_response=credits";
+
         JsonNode movieData = getJson(url);
 
         String title = textOrNull(movieData, "title");
+
         List<String> genres = new ArrayList<>();
-        for (JsonNode g : movieData.path("genres")) {
-            genres.add(g.path("name").asText());
+
+        for (JsonNode genre : movieData.path("genres")) {
+            String name = textOrNull(genre, "name");
+
+            if (name != null && !name.isBlank()) {
+                genres.add(name);
+            }
         }
-        LocalDate releaseDate = parseDate(textOrNull(movieData, "release_date"));
-        String overview = textOrDefault(movieData, "overview", "");
-        String posterPath = textOrNull(movieData, "poster_path");
-        String backdropPath = textOrNull(movieData, "backdrop_path");
+
+        LocalDate releaseDate =
+                parseDate(textOrNull(movieData, "release_date"));
+
+        String overview =
+                textOrDefault(movieData, "overview", "");
+
+        String posterPath =
+                textOrNull(movieData, "poster_path");
+
+        String backdropPath =
+                textOrNull(movieData, "backdrop_path");
+
+
         List<String> creators = new ArrayList<>();
+
         for (JsonNode crewMember : movieData.path("credits").path("crew")) {
 
             if ("Director".equals(textOrNull(crewMember, "job"))) {
+
                 String name = textOrNull(crewMember, "name");
 
                 if (name != null && !name.isBlank()) {
@@ -71,6 +100,7 @@ public class TmdbService {
                 }
             }
         }
+
 
         Integer runtimeMinutes = null;
 
@@ -80,10 +110,11 @@ public class TmdbService {
             runtimeMinutes = runtimeNode.asInt();
         }
 
-        return new FileUploadMetadata.MovieUploadMetadataDto(
-                upload.tmdbId(),
-                null,
-                FileUploadMetadata.UploadType.MOVIE,
+
+        return new MovieMetadata(
+                tmdbId,
+                null,                                      // catalogId
+                MediaCategory.MOVIE,
                 title,
                 releaseDate,
                 overview,
@@ -91,31 +122,69 @@ public class TmdbService {
                 runtimeMinutes,
                 posterPath,
                 backdropPath,
-                upload.files(),
                 genres
         );
     }
 
-    private FileUploadMetadata.ShowUploadMetadataDto showPopulate(FileUploadMetadata.ShowUploadMetadataDto upload)
-    {
-        String url = TMDB_API_BASE + "/tv/" + upload.tmdbId() + "?api_key=" + encode(apiKey);
+
+    private ShowMetadata showPopulate(long tmdbId) {
+
+        String url = TMDB_API_BASE
+                + "/tv/"
+                + tmdbId
+                + "?api_key="
+                + encode(apiKey);
 
         JsonNode showData = getJson(url);
-        List<String> genres = new ArrayList<>();
-        for (JsonNode g : showData.path("genres")) {
-            genres.add(g.path("name").asText());
-        }
-        String title = textOrNull(showData, "name");
-        LocalDate firstAirDate = parseDate(textOrNull(showData, "first_air_date"));
-        String overview = textOrDefault(showData, "overview", "");
-        String status = textOrNull(showData, "status");
-        String posterPath = textOrNull(showData, "poster_path");
-        String backdropPath = textOrNull(showData, "backdrop_path");
 
-        // tv creators
+
+        /*
+         * Show-level metadata
+         */
+
+        String title =
+                textOrNull(showData, "name");
+
+        LocalDate firstAirDate =
+                parseDate(textOrNull(showData, "first_air_date"));
+
+        String overview =
+                textOrDefault(showData, "overview", "");
+
+        String status =
+                textOrNull(showData, "status");
+
+        String posterPath =
+                textOrNull(showData, "poster_path");
+
+        String backdropPath =
+                textOrNull(showData, "backdrop_path");
+
+
+        /*
+         * Genres
+         */
+
+        List<String> genres = new ArrayList<>();
+
+        for (JsonNode genre : showData.path("genres")) {
+
+            String name = textOrNull(genre, "name");
+
+            if (name != null && !name.isBlank()) {
+                genres.add(name);
+            }
+        }
+
+
+        /*
+         * Show creators
+         */
+
         List<String> creators = new ArrayList<>();
 
         for (JsonNode creator : showData.path("created_by")) {
+
             String name = textOrNull(creator, "name");
 
             if (name != null && !name.isBlank()) {
@@ -123,50 +192,116 @@ public class TmdbService {
             }
         }
 
-        // 1 tmdb request per season (refactored from requesting every episode!)
-        List<FileUploadMetadata.SeasonUploadMetadataDto> seasons = new ArrayList<>();
 
-        for (FileUploadMetadata.SeasonUploadMetadataDto uploadSeason : upload.seasons()) {
+        /*
+         * Populate EVERY season and EVERY episode.
+         *
+         * We intentionally do not use the uploaded seasons/episodes
+         * here. TMDB is the source of truth for catalog metadata.
+         */
 
-            String seasonUrl = TMDB_API_BASE + "/tv/" + upload.tmdbId() + "/season/" + uploadSeason.seasonNumber() + "?api_key=" + encode(apiKey);
+        List<SeasonMetadata> seasons = new ArrayList<>();
+
+        for (JsonNode seasonSummary : showData.path("seasons")) {
+
+            int seasonNumber =
+                    seasonSummary.path("season_number").asInt();
+
+
+            /*
+             * TMDB's main TV response gives us the list of seasons,
+             * but the season endpoint gives us the complete episode data.
+             */
+
+            String seasonUrl = TMDB_API_BASE
+                    + "/tv/"
+                    + tmdbId
+                    + "/season/"
+                    + seasonNumber
+                    + "?api_key="
+                    + encode(apiKey);
+
             JsonNode seasonData = getJson(seasonUrl);
-            long tmdbSeasonId = seasonData.path("id").asLong();
-            String seasonTitle = textOrNull(seasonData, "name");
-            String seasonOverview = textOrDefault(seasonData, "overview", "");
-            LocalDate seasonAirDate = parseDate(textOrNull(seasonData, "air_date"));
-            String seasonPosterPath = textOrNull(seasonData, "poster_path");
 
-            List<FileUploadMetadata.EpisodeUploadMetadataDto> episodes = new ArrayList<>();
+
+            Long tmdbSeasonId = null;
+
+            JsonNode seasonIdNode = seasonData.path("id");
+
+            if (seasonIdNode.isNumber()) {
+                tmdbSeasonId = seasonIdNode.asLong();
+            }
+
+
+            String seasonTitle =
+                    textOrNull(seasonData, "name");
+
+            String seasonOverview =
+                    textOrDefault(seasonData, "overview", "");
+
+            LocalDate seasonAirDate =
+                    parseDate(textOrNull(seasonData, "air_date"));
+
+            String seasonPosterPath =
+                    textOrNull(seasonData, "poster_path");
+
+
+            /*
+             * Every episode returned by TMDB is included.
+             */
+
+            List<EpisodeMetadata> episodes = new ArrayList<>();
 
             for (JsonNode tmdbEpisode : seasonData.path("episodes")) {
-                int episodeNumber = tmdbEpisode.path("episode_number").asInt();
 
-                FileUploadMetadata.EpisodeUploadMetadataDto uploadEpisode =
-                        uploadSeason.episodes().stream()
-                                .filter(e ->
-                                        e.episodeNumber() != null && e.episodeNumber() == episodeNumber
-                                ).findFirst().orElse(null);
+                Long tmdbEpisodeId = null;
 
-                if (uploadEpisode == null) {
-                    continue;
+                JsonNode episodeIdNode = tmdbEpisode.path("id");
+
+                if (episodeIdNode.isNumber()) {
+                    tmdbEpisodeId = episodeIdNode.asLong();
                 }
 
-                String episodeTitle = textOrNull(tmdbEpisode, "name");
 
-                LocalDate episodeAirDate = parseDate(textOrNull(tmdbEpisode, "air_date"));
+                Integer episodeNumber = null;
 
-                String episodeOverview = textOrDefault(tmdbEpisode, "overview", "");
+                JsonNode episodeNumberNode =
+                        tmdbEpisode.path("episode_number");
 
-                String stillPath = textOrNull(tmdbEpisode, "still_path");
+                if (episodeNumberNode.isNumber()) {
+                    episodeNumber = episodeNumberNode.asInt();
+                }
+
+
+                String episodeTitle =
+                        textOrNull(tmdbEpisode, "name");
+
+                LocalDate episodeAirDate =
+                        parseDate(textOrNull(tmdbEpisode, "air_date"));
+
+                String episodeOverview =
+                        textOrDefault(tmdbEpisode, "overview", "");
+
+                String stillPath =
+                        textOrNull(tmdbEpisode, "still_path");
+
+
+                /*
+                 * Episode directors / writers
+                 */
 
                 List<String> episodeCreators = new ArrayList<>();
 
                 for (JsonNode crewMember : tmdbEpisode.path("crew")) {
-                    String job = textOrNull(crewMember, "job");
 
-                    if ("Director".equals(job) || "Writer".equals(job)) {
+                    String job =
+                            textOrNull(crewMember, "job");
 
-                        String name = textOrNull(crewMember, "name");
+                    if ("Director".equals(job)
+                            || "Writer".equals(job)) {
+
+                        String name =
+                                textOrNull(crewMember, "name");
 
                         if (name != null && !name.isBlank()) {
                             episodeCreators.add(name);
@@ -174,34 +309,42 @@ public class TmdbService {
                     }
                 }
 
+
+                /*
+                 * Episode runtime
+                 */
+
                 Integer runtimeMinutes = null;
 
-                JsonNode runtimeNode = tmdbEpisode.path("runtime");
+                JsonNode runtimeNode =
+                        tmdbEpisode.path("runtime");
 
                 if (runtimeNode.isNumber()) {
                     runtimeMinutes = runtimeNode.asInt();
                 }
 
+
                 episodes.add(
-                        new FileUploadMetadata.EpisodeUploadMetadataDto(
-                                tmdbEpisode.path("id").asLong(),
-                                null,
+                        new EpisodeMetadata(
+                                tmdbEpisodeId,
+                                null,                       // catalogId
                                 episodeTitle,
                                 episodeAirDate,
                                 episodeOverview,
                                 String.join(", ", episodeCreators),
                                 runtimeMinutes,
                                 episodeNumber,
-                                stillPath,
-                                uploadEpisode.files()
+                                stillPath
                         )
                 );
             }
+
+
             seasons.add(
-                    new FileUploadMetadata.SeasonUploadMetadataDto(
+                    new SeasonMetadata(
                             tmdbSeasonId,
-                            null,
-                            uploadSeason.seasonNumber(),
+                            null,                          // catalogId
+                            seasonNumber,
                             seasonTitle,
                             seasonOverview,
                             seasonAirDate,
@@ -211,10 +354,11 @@ public class TmdbService {
             );
         }
 
-        return new FileUploadMetadata.ShowUploadMetadataDto(
-                upload.tmdbId(),
-                null,
-                FileUploadMetadata.UploadType.SHOW,
+
+        return new ShowMetadata(
+                tmdbId,
+                null,                                      // catalogId
+                MediaCategory.SHOW,
                 title,
                 firstAirDate,
                 overview,
@@ -222,11 +366,10 @@ public class TmdbService {
                 status,
                 posterPath,
                 backdropPath,
-                seasons,
-                genres
+                genres,
+                seasons
         );
     }
-
     public TmdbSearchResponseDto search(String type, String query) {
         requireApiKey();
         String resolvedType = "tv".equals(type) ? "tv" : "movie";

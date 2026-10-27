@@ -47,14 +47,15 @@ export function useNextEpisode(
 
 function buildEpisodeWatchUrl(
   showId: string,
-  seasonId: string,
   episodeId: string,
+  seasonId?: string,
 ) {
   const params = new URLSearchParams({
     show_id: showId,
-    season_id: seasonId,
     episode_id: episodeId,
   });
+  // the /next endpoint doesn't return a seasonId, so it's optional
+  if (seasonId) params.set("season_id", seasonId);
   return `/watch/episode?${params.toString()}`;
 }
 
@@ -80,14 +81,14 @@ async function resolveShowPlaybackTarget(
   if (progress >= RESUME_THRESHOLD) {
     const next = await fetchNextEpisodeRef(current.episodeId);
     if (next) {
-      return buildEpisodeWatchUrl(next.showId, next.seasonId, next.episodeId);
+      return buildEpisodeWatchUrl(next.showId, next.episodeId);
     }
   }
 
   return buildEpisodeWatchUrl(
     current.showId,
-    current.seasonId,
     current.episodeId,
+    current.seasonId,
   );
 }
 

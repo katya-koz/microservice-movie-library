@@ -18,15 +18,15 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class Movie implements Persistable<UUID> {
+public class Movie extends TmdbEntity  implements Persistable<UUID> {
 
     @Id
     @GeneratedValue
     @UuidGenerator
     private UUID id;
 
-    @Column(name = "tmdb_id", unique = true)
-    private long tmdbId;
+//    @Column(name = "tmdb_id", unique = true)
+//    private long tmdbId;
 
     @Column(name = "title", nullable = false)
     private String title;

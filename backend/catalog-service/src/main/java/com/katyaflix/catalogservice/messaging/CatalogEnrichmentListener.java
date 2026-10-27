@@ -1,8 +1,12 @@
 package com.katyaflix.catalogservice.messaging;
 
-import com.katyaflix.catalogservice.dto.CatalogEventDtos;
-import com.katyaflix.catalogservice.dto.CatalogEventDtos.CatalogUpdateStatus;
-import com.katyaflix.catalogservice.service.CatalogUpsertService;
+
+import com.katyaflix.catalogservice.dto.enums.EventStatus;
+import com.katyaflix.catalogservice.dto.enums.MediaCategory;
+import com.katyaflix.catalogservice.dto.mediaenrichment.*;
+import com.katyaflix.catalogservice.service.MediaService;
+import com.katyaflix.catalogservice.service.SubtitleService;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -11,44 +15,62 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 
+@RequiredArgsConstructor
 @Component
 public class CatalogEnrichmentListener {
 
     private static final Logger log = LoggerFactory.getLogger(CatalogEnrichmentListener.class);
 
-    private final CatalogUpsertService upsertService;
+    private final MediaService mediaService;
+    private final SubtitleService subtitleService;
     private final KafkaTemplate<String, Object> kafkaTemplate;
 
-
-    public CatalogEnrichmentListener(CatalogUpsertService upsertService, KafkaTemplate<String, Object> kafkaTemplate) {
-        this.upsertService = upsertService;
-        this.kafkaTemplate = kafkaTemplate;
-    }
     @KafkaListener(
             topics = CatalogTopics.MEDIA_ENRICHMENT_REQUESTED,
-            groupId = "catalog-service",
-            containerFactory = "mediaEnrichmentContainerFactory"
+            groupId = "catalog-service"
     )
-    public void onMediaEnrichment(CatalogEventDtos.MediaFileEnrichmentEvent event) {
-        CatalogEventDtos.MediaCatalogEnrichmentEvent result;
-//        System.out.println("recieved enrichment request!");
+    public void onMediaEnrichment(MediaEnrichmentEvent event) {
+        MediaEnrichmentResult result;
         try {
-            CatalogEventDtos.MediaFileEnrichmentDto mediaFile = event.mediaFile();
-            if(mediaFile.movieId() != null) {
-                upsertService.upsertMovieMediaFile(mediaFile);
+            MediaEnrichment mediaFile = event.mediaFile();
+            if(event.mediaType() == MediaCategory.MOVIE) {
+                mediaService.upsertMovieFile(mediaFile);
             }else{
-                upsertService.upsertEpisodeMediaFile(mediaFile);
+                mediaService.upsertEpisodeFile(mediaFile);
             }
 
 //            System.out.println("recieved enrichment request! --- SUCCESS");
-            result = new CatalogEventDtos.MediaCatalogEnrichmentEvent(event.fileUploadId(), Instant.now(), CatalogUpdateStatus.SUCCESS, "Successfully added media file enrichment.");
+            result = new MediaEnrichmentResult(event.fileUploadId(), Instant.now(), EventStatus.SUCCESS, "Successfully added media file.");
         } catch (Exception e) {
 //            System.out.println("recieved enrichment request! --- FAIL");
             log.warn("Rejected media enrichment event fileUploadId={}: {}",   event.fileUploadId(), e.getMessage());
-            result = new CatalogEventDtos.MediaCatalogEnrichmentEvent(event.fileUploadId(), Instant.now(), CatalogUpdateStatus.FAILURE, e.getMessage());
+            result = new MediaEnrichmentResult(event.fileUploadId(), Instant.now(), EventStatus.FAIL, e.getMessage());
         }
 
 //        System.out.println("sending validation completed event");
         kafkaTemplate.send(CatalogTopics.MEDIA_ENRICHMENT_COMPLETED, event.fileUploadId().toString(), result);
+    }
+
+
+
+    @KafkaListener(
+            topics = CatalogTopics.SUBTITLE_ENRICHMENT_REQUESTED,
+            groupId = "catalog-service"
+    )
+    public void onSubtitleEnrichment(SubtitleEnrichmentEvent event) {
+        SubtitleEnrichmentResult result;
+        try {
+            SubtitleEnrichment subtitle = event.subtitleEnrichment();
+            subtitleService.upsertSubtitleFile(subtitle, event.mediaType());
+
+            result = new SubtitleEnrichmentResult(event.fileUploadId(), Instant.now(), EventStatus.SUCCESS, "Successfully added subtitle file.");
+        } catch (Exception e) {
+//            System.out.println("recieved enrichment request! --- FAIL");
+            log.warn("Rejected media enrichment event fileUploadId={}: {}",   event.fileUploadId(), e.getMessage());
+            result = new SubtitleEnrichmentResult(event.fileUploadId(), Instant.now(), EventStatus.FAIL, e.getMessage());
+        }
+
+//        System.out.println("sending validation completed event");
+        kafkaTemplate.send(CatalogTopics.SUBTITLE_ENRICHMENT_COMPLETED, event.fileUploadId().toString(), result);
     }
 }

@@ -20,7 +20,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class Season implements Persistable<UUID> {
+public class Season extends TmdbEntity  implements Persistable<UUID> {
 
     @Id
     @GeneratedValue
@@ -38,8 +38,8 @@ public class Season implements Persistable<UUID> {
     @Column(name = "season_number", nullable = false)
     private Integer seasonNumber;
 
-    @Column(name = "tmdb_id")
-    private long tmdbId;
+//    @Column(name = "tmdb_id")
+//    private long tmdbId;
 
     private String title;
 

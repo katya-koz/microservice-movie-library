@@ -24,20 +24,14 @@ export type PlaybackInfo = {
 // episode/season numbers). Used by useNextEpisode.
 export type NextEpisode = {
   episodeId: string;
+  showId: string;
   episodeNumber: number;
   seasonNumber: number;
   title: string;
   stillPath: string | null;
 };
 
-// Just enough to build a /watch/episode URL. This is intentionally NOT the
-// same as NextEpisode — resolveShowPlaybackTarget (the show page's Play
-// button) only needs ids to navigate, not display metadata, and hits a
-// different endpoint than the player's "up next" card does. Renamed from
-// the old "NextEpisode2" and exported (it wasn't before, which meant
-// api/playback.ts couldn't legally type its return value with it).
-export type NextEpisodeRef = {
-  episodeId: string;
-  seasonId: string;
-  showId: string;
-};
+// Just enough to build a /watch/episode URL. The /next endpoint returns the
+// NextEpisode shape above (it has no seasonId), so this is just the ids the
+// show page's Play button needs to navigate.
+export type NextEpisodeRef = Pick<NextEpisode, "episodeId" | "showId">;

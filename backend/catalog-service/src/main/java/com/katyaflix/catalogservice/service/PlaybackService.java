@@ -6,6 +6,7 @@ import com.katyaflix.catalogservice.dto.CatalogDtos.SubtitleTrack;
 import com.katyaflix.catalogservice.entity.Episode;
 import com.katyaflix.catalogservice.entity.MediaFile;
 import com.katyaflix.catalogservice.entity.Season;
+import com.katyaflix.catalogservice.entity.Subtitle;
 import com.katyaflix.catalogservice.repository.EpisodeRepository;
 import com.katyaflix.catalogservice.repository.MediaFileRepository;
 import com.katyaflix.catalogservice.repository.SeasonRepository;
@@ -62,7 +63,13 @@ public class PlaybackService {
     }
 
     private PlaybackInfo toPlaybackInfo(MediaFile file) {
-        List<SubtitleTrack> tracks = subtitleRepository.findByMediaFileId(file.getId()).stream()
+        // subtitles hang off the movie / episode (not the media file), so they show up
+        // even if they were uploaded before the video
+        List<Subtitle> subtitles = file.getMovie() != null
+                ? subtitleRepository.findByMovieId(file.getMovie().getId())
+                : subtitleRepository.findByEpisodeId(file.getEpisode().getId());
+
+        List<SubtitleTrack> tracks = subtitles.stream()
                 .map(s -> new SubtitleTrack(s.getId(), s.getLanguageCode(), s.getLabel(), s.getFilePath(),s.isForced(), s.isSdh(), s.isDefault()))
                 .toList();
 

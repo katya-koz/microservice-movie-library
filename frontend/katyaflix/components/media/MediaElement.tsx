@@ -13,10 +13,6 @@ export default function MediaElement({ media, mediaType }: MediaElementProps) {
       ? `/movies/${media.id}/detail`
       : `/shows/${media.id}/detail`;
 
-  const year = media.releaseDate
-    ? new Date(media.releaseDate).getFullYear()
-    : null;
-
   return (
     <Link href={href} className="group block">
       {/* Poster */}
@@ -41,8 +37,6 @@ export default function MediaElement({ media, mediaType }: MediaElementProps) {
         <h2 className="truncate text-sm font-medium text-white">
           {media.title}
         </h2>
-
-        {year && <p className="text-xs text-slate-500">{year}</p>}
       </div>
     </Link>
   );

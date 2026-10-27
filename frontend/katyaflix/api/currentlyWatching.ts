@@ -30,7 +30,10 @@ export async function fetchFirstEpisode(
   showId: string,
 ): Promise<CurrentEpisode | null> {
   const res = await fetch(`${API_URL_ROOT}/shows/${showId}/first-episode`);
-  if (res.status === 404) return null;
+  if (res.status === 404 || res.status === 204) return null;
   if (!res.ok) throw new Error("Failed to load first episode");
-  return res.json();
+  // the controller returns the service's result directly, so a show with no
+  // episodes can come back as 200 with an empty body
+  const text = await res.text();
+  return text ? (JSON.parse(text) as CurrentEpisode) : null;
 }

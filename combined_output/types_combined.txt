@@ -1,0 +1,770 @@
+
+================================================================================
+FILE: currentlyWatching.ts
+================================================================================
+
+import { MediaType } from "@/types/media";
+
+export type CurrentlyWatchingMedia = {
+  mediaType: MediaType;
+  mediaId: string;
+};
+
+export type CurrentEpisode = {
+  episodeId: string;
+  seasonId: string;
+  showId: string;
+  watchedSeconds: number;
+  durationSeconds: number;
+};
+
+
+
+================================================================================
+FILE: media.ts
+================================================================================
+
+// The MOVIE/SHOW union used to be redeclared separately in currentlyWatching.ts,
+// myList.ts, and hooks/useWatchlist.ts. This is now the one canonical copy —
+// everything else imports it instead of redefining it.
+export type MediaType = "MOVIE" | "SHOW";
+
+export type MediaRef = { mediaType: MediaType; mediaId: string };
+
+export type MediaSummary = {
+  id: string;
+  mediaType: MediaType;
+  title: string;
+  posterPath: string | null;
+};
+
+// Field names (id/title/posterPath) are inferred from how posters are
+// used elsewhere (season.posterPath, episode.stillPath) — adjust to match
+// the real MovieSummary/ShowSummary records if they differ.
+export type RawSummary = {
+  id: string;
+  title: string;
+  posterPath: string | null;
+};
+
+// Shared shape for the movies/shows paginated list hooks (useMovies, useShows).
+// Was declared twice — once imported from types/movie.ts, once redeclared
+// inline in hooks/useShows.ts — with identical fields both times.
+export type PagedQueryOptions = {
+  page?: number;
+  size?: number;
+  sort?: string;
+  title?: string;
+};
+
+
+
+================================================================================
+FILE: movie.ts
+================================================================================
+
+export type MovieSummary = {
+  id: string;
+  tmdbId: number | null;
+  title: string;
+  releaseDate: string | null;
+  posterPath: string | null;
+};
+
+export type MovieDetail = {
+  id: string;
+  tmdbId: number | null;
+  title: string;
+  releaseDate: string | null;
+  overview: string | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  runtimeMinutes: number | null;
+  creatorNames: string[];
+  createdAt: string;
+  updatedAt: string;
+  genres: string[];
+};
+
+export type MoviePage = {
+  content: MovieSummary[];
+  totalPages: number;
+  totalElements: number;
+  size: number;
+  number: number;
+  first: boolean;
+  last: boolean;
+};
+
+
+
+================================================================================
+FILE: playback.ts
+================================================================================
+
+export type SubtitleTrack = {
+  id: string;
+  languageCode: string;
+  label: string;
+  filePath: string;
+  isForced: boolean;
+  isSdh: boolean;
+  isDefault: boolean;
+};
+
+export type PlaybackInfo = {
+  mediaFileId: string;
+  filePath: string;
+  containerFormat: string;
+  durationSeconds: number;
+  resolution: string;
+  subtitles: SubtitleTrack[];
+
+  seasonId: string | null;
+  showId: string | null;
+};
+
+// Full metadata for the "up next" preview card in the player (title, still,
+// episode/season numbers). Used by useNextEpisode.
+export type NextEpisode = {
+  episodeId: string;
+  episodeNumber: number;
+  seasonNumber: number;
+  title: string;
+  stillPath: string | null;
+};
+
+// Just enough to build a /watch/episode URL. This is intentionally NOT the
+// same as NextEpisode — resolveShowPlaybackTarget (the show page's Play
+// button) only needs ids to navigate, not display metadata, and hits a
+// different endpoint than the player's "up next" card does. Renamed from
+// the old "NextEpisode2" and exported (it wasn't before, which meant
+// api/playback.ts couldn't legally type its return value with it).
+export type NextEpisodeRef = {
+  episodeId: string;
+  seasonId: string;
+  showId: string;
+};
+
+
+
+================================================================================
+FILE: profilePicture.ts
+================================================================================
+
+export type ProfilePicture = {
+  id: string;
+  name: string;
+  url: string;
+};
+
+
+
+================================================================================
+FILE: profiles.ts
+================================================================================
+
+export type Profile = {
+  id: string;
+  displayName: string;
+  profilePictureId: string | null;
+  profilePictureUrl: string | null;
+};
+
+export type CreateProfileInput = {
+  displayName: string;
+  profilePictureId?: string | null;
+};
+
+export type UpdateProfileInput = {
+  id: string;
+  displayName?: string;
+  profilePictureId?: string | null;
+};
+
+
+
+================================================================================
+FILE: show.ts
+================================================================================
+
+export type ShowSummary = {
+  id: string;
+  tmdbId: number | null;
+  title: string;
+  releaseDate: string | null;
+  posterPath: string | null;
+};
+
+export type ShowDetail = {
+  id: string;
+  tmdbId: number | null;
+  title: string;
+  firstAirDate: string | null;
+  status: string | null;
+  overview: string | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  creatorNames: string[];
+  createdAt: string;
+  updatedAt: string;
+  genres: string[];
+  seasons: SeasonSummary[]; // season picker only — not full episode lists
+};
+
+export type ShowPage = {
+  content: ShowSummary[];
+  totalPages: number;
+  totalElements: number;
+  size: number;
+  number: number;
+  first: boolean;
+  last: boolean;
+};
+
+export type SeasonSummary = {
+  seasonId: string;
+  seasonNumber: number;
+  title: string;
+  posterPath: string | null;
+  episodeCount: number;
+};
+
+export type EpisodeDetail = {
+  id: string;
+  episodeNumber: number;
+  seasonNumber: number;
+  title: string;
+  overview: string;
+  runtimeMinutes: number | null;
+  stillPath: string | null;
+  airDate: string | null; // ISO date
+};
+
+
+
+================================================================================
+FILE: tmdb.ts
+================================================================================
+
+export interface TmdbSearchResult {
+  id: number;
+  title: string;
+  year: string;
+  /** Full ISO date (release_date / first_air_date) if TMDB has one — needed
+   * server-side to populate the catalog's DATE columns; `year` alone isn't enough. */
+  releaseDate: string | null;
+  posterPath: string | null;
+  overview: string;
+}
+
+export interface TmdbDetails {
+  genres: string[];
+  runtime: number | null;
+  backdropPath: string | null;
+  overview: string;
+  creators: string[];
+  status: string | null; // TV only — "Ended", "Returning Series", etc.
+}
+
+export interface TmdbSeasonEpisode {
+  episodeNumber: number;
+  name: string;
+  overview: string;
+  stillPath: string | null;
+}
+
+export interface SubtitleTrack {
+  id: string;
+  label: string;
+  fileName: string;
+  /** Native <track> only understands WebVTT — .srt is converted at upload time. */
+  supported: boolean;
+}
+
+export interface Movie {
+  id: string;
+  tmdbId: number;
+  title: string;
+  year: string;
+  overview: string;
+  posterPath: string | null;
+  backdropPath: string | null;
+  genres: string[];
+  runtime: number | null;
+  videoFileName: string;
+  duration?: number;
+  subtitles: SubtitleTrack[];
+  createdAt: number;
+}
+
+export interface Episode {
+  id: string;
+  number: number;
+  title: string;
+  fileName: string;
+  duration?: number;
+  subtitles: SubtitleTrack[];
+  overview?: string;
+  stillPath?: string | null;
+}
+
+export interface Season {
+  id: string;
+  name: string;
+  number: number;
+  episodes: Episode[];
+}
+
+export interface Show {
+  id: string;
+  tmdbId: number;
+  title: string;
+  year: string;
+  overview: string;
+  posterPath: string | null;
+  backdropPath: string | null;
+  genres: string[];
+  seasons: Season[];
+  createdAt: number;
+}
+
+
+
+================================================================================
+FILE: uploadJobs.ts
+================================================================================
+
+export type UploadStatus =
+  | "PENDING"
+  | "SAVING_ASSETS"
+  | "QUEUED_FOR_ENCODING"
+  | "ENCODING"
+  | "AWAITING_CATALOG"
+  | "READY_TO_FINALIZE"
+  | "FINALIZING"
+  | "COMPLETED"
+  | "FAILURE";
+
+export interface UploadJobStatus {
+  id: string;
+  mediaType: string;
+  title: string;
+  status: UploadStatus;
+  currentStep: string | null;
+  tmdbId: number;
+  catalogValidationStatus: boolean;
+  fileUploadStatus: boolean;
+  mediaFileEnrichmentStatus: boolean;
+  filePathUpdateStatus: boolean;
+  encodedFileCount: number;
+  errorMessages: string[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface UploadJobsPage {
+  content: UploadJobStatus[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+}
+
+export const STATUS_ORDER: UploadStatus[] = [
+  "PENDING",
+  "SAVING_ASSETS",
+  "QUEUED_FOR_ENCODING",
+  "ENCODING",
+  "AWAITING_CATALOG",
+  "FINALIZING",
+  "COMPLETED",
+];
+
+export const STATUS_LABELS: Record<UploadStatus, string> = {
+  PENDING: "Queued",
+  SAVING_ASSETS: "Saving files",
+  QUEUED_FOR_ENCODING: "Waiting for an encoder",
+  ENCODING: "Encoding",
+  AWAITING_CATALOG: "Waiting on catalog",
+  READY_TO_FINALIZE: "Ready to finalize",
+  FINALIZING: "Finalizing",
+  COMPLETED: "Completed",
+  FAILURE: "Failed",
+};
+
+
+
+================================================================================
+FILE: uploadPayload.ts
+================================================================================
+
+import { TmdbSearchResult } from "./tmdb";
+import { MovieStructure, ShowStructure } from "./uploadTree";
+
+export type FileType = "VIDEO" | "SUBTITLE";
+
+export interface UploadFileEntryDto {
+  key: string;
+  fileType: FileType;
+  filename: string;
+}
+
+export interface EpisodeUploadMetadataDto {
+  episodeNumber: number;
+  files: UploadFileEntryDto[];
+}
+
+export interface SeasonUploadMetadataDto {
+  seasonNumber: number;
+  episodes: EpisodeUploadMetadataDto[];
+}
+
+export interface MovieUploadMetadataDto {
+  type: "MOVIE";
+  tmdbId: number;
+  files: UploadFileEntryDto[];
+}
+
+export interface ShowUploadMetadataDto {
+  type: "SHOW";
+  tmdbId: number;
+  seasons: SeasonUploadMetadataDto[];
+}
+
+export type UploadMetadata = MovieUploadMetadataDto | ShowUploadMetadataDto;
+
+export interface BuiltUpload {
+  metadata: UploadMetadata;
+  formData: FormData;
+}
+
+export function buildMovieUpload(
+  selected: TmdbSearchResult,
+  structure: MovieStructure,
+): BuiltUpload | null {
+  if (!structure.video) return null;
+
+  const files: UploadFileEntryDto[] = [
+    { key: "video", fileType: "VIDEO", filename: structure.video.name },
+    ...structure.subtitles.map((sub, i) => ({
+      key: `sub_${i}`,
+      fileType: "SUBTITLE" as const,
+      filename: sub.node.name, // movies aren't renamed
+    })),
+  ];
+
+  const metadata: MovieUploadMetadataDto = {
+    type: "MOVIE",
+    tmdbId: selected.id,
+    files,
+  };
+
+  const formData = new FormData();
+  formData.append("metadata", JSON.stringify(metadata));
+  formData.append("video", structure.video.file, structure.video.name);
+  structure.subtitles.forEach((sub, i) =>
+    formData.append(`sub_${i}`, sub.node.file, sub.node.name),
+  );
+
+  return { metadata, formData };
+}
+
+export function buildShowUpload(
+  selected: TmdbSearchResult,
+  structure: ShowStructure,
+): BuiltUpload | null {
+  const seasonsWithEpisodes = structure.seasons.filter(
+    (s) => s.episodes.length > 0,
+  );
+  if (seasonsWithEpisodes.length === 0) return null;
+
+  // Defensive: duplicate season/episode numbers would produce identical form
+  // keys, and the backend would silently keep only one of the files.
+  const seen = new Set<string>();
+  for (const s of seasonsWithEpisodes) {
+    for (const e of s.episodes) {
+      const k = `${s.seasonNumber}:${e.episodeNumber}`;
+      if (seen.has(k)) return null;
+      seen.add(k);
+    }
+  }
+
+  const formData = new FormData();
+
+  const seasons: SeasonUploadMetadataDto[] = seasonsWithEpisodes.map(
+    (season) => ({
+      seasonNumber: season.seasonNumber,
+      episodes: season.episodes.map((episode) => {
+        const videoKey = `s${season.seasonNumber}_e${episode.episodeNumber}_video`;
+
+        // The multipart part's filename is what the backend writes to disk
+        // (getOriginalFilename), so the canonical name goes there too.
+        const videoName =
+          structure.canonicalNameById.get(episode.video.id) ??
+          episode.video.name;
+        formData.append(videoKey, episode.video.file, videoName);
+
+        const files: UploadFileEntryDto[] = [
+          { key: videoKey, fileType: "VIDEO", filename: videoName },
+          ...episode.subtitles.map((sub, i) => {
+            const subKey = `${videoKey}_sub${i}`;
+            const subName =
+              structure.canonicalNameById.get(sub.node.id) ?? sub.node.name;
+            formData.append(subKey, sub.node.file, subName);
+            return {
+              key: subKey,
+              fileType: "SUBTITLE" as const,
+              filename: subName,
+            };
+          }),
+        ];
+
+        return { episodeNumber: episode.episodeNumber, files };
+      }),
+    }),
+  );
+
+  const metadata: ShowUploadMetadataDto = {
+    type: "SHOW",
+    tmdbId: selected.id,
+    seasons,
+  };
+  formData.append("metadata", JSON.stringify(metadata));
+  return { metadata, formData };
+}
+
+
+
+================================================================================
+FILE: uploadPipeline.ts
+================================================================================
+
+export type FileKind = "VIDEO" | "SUBTITLE";
+
+/** Mirrors the backend FileUploadStatus enum. */
+export type ServerFileStatus =
+  | "UPLOADING"
+  | "QUEUED_FOR_ENCODING"
+  | "ENCODING"
+  | "FINALIZING"
+  | "DONE"
+  | "FAILED";
+
+// ---------------------------------------------------------------------------
+// API shapes (snake_case = exactly what the Spring controller returns)
+// ---------------------------------------------------------------------------
+
+export interface CreateJobResponse {
+  job_id: string;
+}
+
+export interface JobEpisodeRef {
+  season_number: number;
+  episode_number: number;
+  tmdb_id: number;
+}
+
+export interface UploadJobInfo {
+  id: string;
+  media_type: "MOVIE" | "SHOW";
+  title: string;
+  tmdb_id: number;
+  /** backend PipelineStatus name: IN_PROGRESS | COMPLETED | FAILED */
+  validation_status: string;
+  validation_message: string | null;
+  /** empty for movies */
+  episodes: JobEpisodeRef[];
+}
+
+export interface AcceptedFileResponse {
+  file_upload_id: string;
+  status: ServerFileStatus;
+}
+
+export interface FileStatusResponse {
+  file_upload_id: string;
+  upload_job_id: string;
+  status: ServerFileStatus;
+  progress_percent: number;
+  attempts: number;
+  error: string | null;
+  final_path: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Planning: one entry per HTTP upload we are going to make
+// ---------------------------------------------------------------------------
+
+export interface PlannedFile {
+  key: string;
+  filename: string;
+  fileType: FileKind;
+  /** human label, e.g. "S01EP02", "S01EP02 subtitle (en)", "Movie" */
+  label: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  language?: string;
+  file: File;
+}
+
+// ---------------------------------------------------------------------------
+// UI state
+// ---------------------------------------------------------------------------
+
+/**
+ * waiting        - not started yet
+ * uploading      - HTTP transfer in progress (progress bar)
+ * server         - transfer finished; follow `serverStatus` from polling
+ * upload-failed  - the HTTP call itself failed / was rejected
+ */
+export type FileStage = "waiting" | "uploading" | "server" | "upload-failed";
+
+export interface PipelineFile {
+  key: string;
+  label: string;
+  filename: string;
+  fileType: FileKind;
+  stage: FileStage;
+  uploadPercent: number;
+  fileUploadId: string | null;
+  serverStatus: ServerFileStatus | null;
+  encodePercent: number;
+  attempts: number;
+  error: string | null;
+  /** upload-failed files that are worth trying again (not "episode doesn't exist on TMDB") */
+  retryable: boolean;
+}
+
+export type PipelinePhase =
+  | "idle"
+  | "creating-job"
+  | "validating"
+  | "transferring"
+  | "finished"
+  | "failed";
+
+export interface PipelineState {
+  phase: PipelinePhase;
+  jobId: string | null;
+  jobTitle: string | null;
+  /** set when the whole pipeline failed (job creation / catalog validation) */
+  error: string | null;
+  files: PipelineFile[];
+}
+
+export const initialPipelineState: PipelineState = {
+  phase: "idle",
+  jobId: null,
+  jobTitle: null,
+  error: null,
+  files: [],
+};
+
+
+
+================================================================================
+FILE: uploadTree.ts
+================================================================================
+
+export type FileRole = "video" | "subtitle" | "other";
+export type NumberSource = "override" | "parsed" | "sequential";
+
+export interface ShowOverrides {
+  seasons: Record<string, number>; // season folder id -> season number
+  episodes: Record<string, number>; // video file id -> episode number
+}
+export interface TreeFileNode {
+  kind: "file";
+  id: string; // = relativePath, stable across renders
+  name: string;
+  file: File;
+  role: FileRole;
+}
+
+export interface TreeFolderNode {
+  kind: "folder";
+  id: string;
+  name: string;
+  children: TreeNode[];
+}
+
+export interface SubtitleUpload {
+  node: TreeFileNode;
+  languageCode: string;
+  guessed: boolean;
+}
+
+export interface EpisodeUpload {
+  seasonNumber: number;
+  episodeNumber: number;
+  video: TreeFileNode;
+  subtitles: SubtitleUpload[];
+  source: NumberSource;
+  conflict: boolean;
+}
+
+export interface SeasonUpload {
+  seasonNumber: number;
+  folderName: string;
+  episodes: EpisodeUpload[];
+  folderId: string;
+  source: NumberSource;
+  conflict: boolean;
+}
+
+export interface ShowStructure {
+  seasons: SeasonUpload[];
+  looseFiles: TreeFileNode[];
+  canonicalNameById: Map<string, string>;
+  seasonLabelByFolderId: Map<string, string>;
+  droppedSubtitleIds: Set<string>;
+}
+
+export interface MovieStructure {
+  video: TreeFileNode | null;
+  subtitles: SubtitleUpload[];
+  extraVideos: TreeFileNode[];
+  hasFolders: boolean;
+}
+
+export type TreeNode = TreeFileNode | TreeFolderNode;
+
+
+
+================================================================================
+FILE: watchlist.ts
+================================================================================
+
+import { MediaType } from "@/types/media";
+
+// Raw watchlist row as the user-service returns it (no title/poster — just
+// enough to check membership and to look up catalog summaries for).
+export type WatchlistItem = {
+  id: string;
+  mediaType: MediaType;
+  mediaId: string;
+  added: string;
+};
+
+
+
+================================================================================
+FILE: watchtime.ts
+================================================================================
+
+export type WatchtimeMediaType = "MOVIE" | "EPISODE";
+
+export type Watchtime = {
+  mediaType: WatchtimeMediaType;
+  mediaId: string;
+  watchtimeSeconds: number;
+  // SeasonEpisodesSection reads this to compute each episode's progress bar
+  // (watchtimeSeconds / durationSeconds), so it has to be here. One of the
+  // two old duplicate hook files was missing this field — that was a bug,
+  // not an intentional slimmer variant.
+  durationSeconds: number;
+  updatedAt: string | null;
+};
+
+

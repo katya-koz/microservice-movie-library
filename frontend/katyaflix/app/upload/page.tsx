@@ -6,7 +6,7 @@ import Link from "next/link";
 import TmdbSearch from "@/components/TmdbSearch";
 import UploadDropzone from "@/components/UploadDropzone";
 import FileTree from "@/components/FileTree";
-import UploadJobStatusPanel from "@/components/UploadJobStatusPanel";
+import { UploadProgressPanel } from "@/components/UploadProgressPanel";
 import ShowNumbering from "@/components/ShowNumbering";
 
 import { DroppedFile } from "@/lib/files";
@@ -20,7 +20,7 @@ import { ShowOverrides } from "@/types/uploadTree";
 import { TmdbSearchResult } from "@/types/tmdb";
 
 import { useTmdbDetails } from "@/hooks/useTmdbDetails";
-import { useUpload } from "@/hooks/useUpload";
+import { useUploadPipeline } from "@/hooks/useUploadPipeline";
 import { useUser } from "@/context/UserContext";
 
 type MediaType = "movie" | "show";
@@ -33,7 +33,6 @@ export default function UploadPage() {
   const [selected, setSelected] = useState<TmdbSearchResult | null>(null);
 
   const [droppedFiles, setDroppedFiles] = useState<DroppedFile[]>([]);
-  const [progress, setProgress] = useState(0);
   const [overrides, setOverrides] = useState<ShowOverrides>(EMPTY_OVERRIDES);
 
   const tmdbType = mediaType === "show" ? "tv" : "movie";
@@ -43,26 +42,19 @@ export default function UploadPage() {
     selected?.id ?? null,
   );
 
-  const uploadMutation = useUpload();
+  const pipeline = useUploadPipeline();
+  const isUploading = pipeline.isRunning;
 
-  const isUploading = uploadMutation.isPending;
-
-  const uploadError = uploadMutation.error
-    ? uploadMutation.error instanceof Error
-      ? uploadMutation.error.message
-      : "Upload failed."
-    : null;
-
-  const uploadSuccess = uploadMutation.data
-    ? { jobId: uploadMutation.data.jobId }
-    : null;
+  // Never cancel a run that's in flight just because the user touched the form.
+  function resetPipeline() {
+    if (!pipeline.isRunning) pipeline.reset();
+  }
 
   function switchMediaType(next: MediaType) {
     setMediaType(next);
     setSelected(null);
-    setProgress(0);
     setOverrides(EMPTY_OVERRIDES);
-    uploadMutation.reset();
+    resetPipeline();
   }
 
   function handleFiles(incoming: DroppedFile[]) {
@@ -76,15 +68,13 @@ export default function UploadPage() {
       return Array.from(map.values());
     });
 
-    setProgress(0);
-    uploadMutation.reset();
+    resetPipeline();
   }
 
   function clearAll() {
     setDroppedFiles([]);
-    setProgress(0);
     setOverrides(EMPTY_OVERRIDES);
-    uploadMutation.reset();
+    resetPipeline();
   }
 
   function setSeasonNumber(folderId: string, n: number | null) {
@@ -207,32 +197,19 @@ export default function UploadPage() {
   const canUpload = validation.ready && Boolean(selected) && !isUploading;
 
   async function handleUpload() {
-    if (!selected) return;
-
-    setProgress(0);
-    uploadMutation.reset();
+    const userId = user.user?.id;
+    if (!selected || !userId) return;
 
     const built =
       mediaType === "movie"
         ? buildMovieUpload(selected, movieStructure)
         : buildShowUpload(selected, showStructure);
 
-    if (!built) {
-      return;
-    }
+    if (!built) return;
 
-    try {
-      await uploadMutation.mutateAsync({
-        formData: built.formData,
-        userId: user.user?.id || "n/a",
-        onProgress: setProgress,
-      });
-
-      setDroppedFiles([]);
-      setOverrides(EMPTY_OVERRIDES);
-    } catch {
-      // Error is exposed through uploadMutation.error.
-    }
+    // 1) create job -> 2) wait for catalog validation -> 3) upload one file at a
+    // time -> 4) follow each file's status over the websocket. All handled by the hook.
+    await pipeline.start({ built, userId });
   }
 
   return (
@@ -360,17 +337,8 @@ export default function UploadPage() {
               onClick={handleUpload}
               className="w-full rounded bg-marquee py-3 font-mono text-sm font-semibold uppercase tracking-widest text-ink transition-colors hover:bg-marquee-bright disabled:cursor-not-allowed  disabled:bg-ink-line disabled:text-paper-faint"
             >
-              {isUploading ? `Uploading… ${progress}%` : "Upload"}
+              {isUploading ? "Working…" : "Upload"}
             </button>
-
-            {isUploading && (
-              <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-ink-line">
-                <div
-                  className="h-full rounded-full bg-marquee transition-all"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            )}
 
             {validation.message && !isUploading && (
               <p className="mt-3 font-mono text-xs text-paper-muted">
@@ -384,23 +352,16 @@ export default function UploadPage() {
               </p>
             )}
 
-            {uploadError && (
-              <p className="mt-3 font-mono text-xs text-signal-error">
-                {uploadError}
-              </p>
-            )}
-
-            {/*
-              Files finish uploading well before encoding/finalizing does -
-              the job is now queued and processed in the background, so we
-              switch to a live websocket panel here instead of a static
-              "uploaded" message.
-            */}
-            {uploadSuccess && (
-              <div className="mt-3">
-                <UploadJobStatusPanel jobId={uploadSuccess.jobId} />
-              </div>
-            )}
+            {/* per-file upload progress + live server status (websocket) */}
+            <div className="mt-3">
+              <UploadProgressPanel
+                state={pipeline.state}
+                live={pipeline.live}
+                canRetry={pipeline.canRetry}
+                onRetry={pipeline.retryFailedUploads}
+                onReset={clearAll}
+              />
+            </div>
           </div>
         </div>
 

@@ -1,23 +1,18 @@
 export type ShowSummary = {
   id: string;
-  tmdbId: number | null;
   title: string;
-  releaseDate: string | null;
   posterPath: string | null;
 };
 
 export type ShowDetail = {
   id: string;
-  tmdbId: number | null;
   title: string;
   firstAirDate: string | null;
   status: string | null;
   overview: string | null;
   posterPath: string | null;
   backdropPath: string | null;
-  creatorNames: string[];
-  createdAt: string;
-  updatedAt: string;
+  creatorNames: string | null; // comma separated
   genres: string[];
   seasons: SeasonSummary[]; // season picker only — not full episode lists
 };

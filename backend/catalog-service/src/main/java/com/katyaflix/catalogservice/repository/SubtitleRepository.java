@@ -14,6 +14,15 @@ public interface SubtitleRepository extends JpaRepository<Subtitle, UUID> {
     // filePath is unique - used to make subtitle upserts idempotent in case
     // a CatalogPathUpdateEvent is ever redelivered (Kafka is at-least-once)
     Optional<Subtitle> findByFilePath(String filePath);
+
+    Optional<Subtitle> findByOriginalFileName(String originalName);
 //    void deleteByMediaFileMovieId(UUID movieId);
 //    void deleteByMediaFileEpisodeId(UUID episodeId);
+
+    Optional<Subtitle> findByMovieIdAndOriginalFileName(UUID movieId, String originalFileName);
+    Optional<Subtitle> findByEpisodeIdAndOriginalFileName(UUID episodeId, String originalFileName);
+
+    // for PlaybackService (see below)
+    List<Subtitle> findByMovieId(UUID movieId);
+    List<Subtitle> findByEpisodeId(UUID episodeId);
 }
