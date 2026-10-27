@@ -18,6 +18,7 @@ public interface SubtitleRepository extends JpaRepository<Subtitle, UUID> {
     Optional<Subtitle> findByOriginalFileName(String originalName);
 //    void deleteByMediaFileMovieId(UUID movieId);
 //    void deleteByMediaFileEpisodeId(UUID episodeId);
+    
 
     Optional<Subtitle> findByMovieIdAndOriginalFileName(UUID movieId, String originalFileName);
     Optional<Subtitle> findByEpisodeIdAndOriginalFileName(UUID episodeId, String originalFileName);

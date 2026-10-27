@@ -15,9 +15,6 @@ import java.util.UUID;
 
 public interface UploadJobRepository extends MongoRepository<UploadJob, UUID> {
 
-
-
-
     Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(
             UUID userId,
             Pageable pageable
