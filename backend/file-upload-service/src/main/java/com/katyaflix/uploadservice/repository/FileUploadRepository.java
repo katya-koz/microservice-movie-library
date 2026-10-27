@@ -17,6 +17,7 @@ import java.util.UUID;
 
 public interface FileUploadRepository extends MongoRepository<FileUpload, UUID> {
 
+    @Query("{ '_id': ?0 }")
     @Update("{ '$set': { 'encoding_progress': ?1 } }")
     void updateEncodeProgress(UUID id, int progress);
 
@@ -158,10 +159,7 @@ public interface FileUploadRepository extends MongoRepository<FileUpload, UUID> 
 //    );
 
 
-    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(
-            UUID userId,
-            Pageable pageable
-    );
+//    Page<UploadJob> findAllByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
 
 

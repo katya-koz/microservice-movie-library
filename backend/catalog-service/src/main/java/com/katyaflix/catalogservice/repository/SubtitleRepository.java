@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface SubtitleRepository extends JpaRepository<Subtitle, UUID> {
-    List<Subtitle> findByMediaFileId(UUID mediaFileId);
+//    List<Subtitle> findByMediaFileId(UUID mediaFileId);
 
     // filePath is unique - used to make subtitle upserts idempotent in case
     // a CatalogPathUpdateEvent is ever redelivered (Kafka is at-least-once)
